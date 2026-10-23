@@ -268,7 +268,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'descr' => $descr,
                     'enabled' => true
                 ];
-                $savemsg = "Özel hız atama kuralı ('{$t_val}') başarıyla eklendi ve kernel seviyesinde uygulandı.";
+                $savemsg = "Özel hız atama kuralı ('{$t_val}') başarıyla eklendi ve uygulandı.";
             } else {
                 $savemsg = "Hız atama kuralı ('{$t_val}') başarıyla güncellendi.";
             }
@@ -334,10 +334,9 @@ foreach ($conf['profiles'] ?? [] as $p) {
             Active Directory ile tam entegre çalışır; doğrulanmış personele ayrı, misafir ve mobil cihazlara otomatik ayrı hız limitleri tanımlar.
         </p>
 
-        <form method="post" id="mainForm" class="form-horizontal">
+        <!-- FORM 1: Settings Form -->
+        <form method="post" id="settingsForm" class="form-horizontal" novalidate>
             <input type="hidden" name="act" value="save_settings">
-            <input type="hidden" name="prof_id" id="main_prof_id" value="">
-            <input type="hidden" name="rule_id" id="main_rule_id" value="">
 
             <div class="alert <?=!empty($conf['enabled']) ? 'alert-success' : 'alert-warning'?>" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:12px 18px; border-radius:6px;">
                 <div style="font-size:14px;">
@@ -366,7 +365,7 @@ foreach ($conf['profiles'] ?? [] as $p) {
                                 <label class="col-sm-5 control-label">Varsayılan İndirme (Download):</label>
                                 <div class="col-sm-7">
                                     <div class="input-group">
-                                        <input type="number" class="form-control" name="default_download_mbps" value="<?=htmlspecialchars((string)($conf['default_download_mbps'] ?? 5))?>" min="0.5" max="1000" step="0.5" required>
+                                        <input type="number" class="form-control" name="default_download_mbps" value="<?=htmlspecialchars((string)($conf['default_download_mbps'] ?? 5))?>" min="0.5" max="1000" step="0.5">
                                         <span class="input-group-addon">Mbit/s</span>
                                     </div>
                                     <span class="help-block">Özel kural atanmamış AD domain kullanıcılarına uygulanacak standart maksimum indirme hızı.</span>
@@ -377,7 +376,7 @@ foreach ($conf['profiles'] ?? [] as $p) {
                                 <label class="col-sm-5 control-label">Varsayılan Yükleme (Upload):</label>
                                 <div class="col-sm-7">
                                     <div class="input-group">
-                                        <input type="number" class="form-control" name="default_upload_mbps" value="<?=htmlspecialchars((string)($conf['default_upload_mbps'] ?? 5))?>" min="0.5" max="1000" step="0.5" required>
+                                        <input type="number" class="form-control" name="default_upload_mbps" value="<?=htmlspecialchars((string)($conf['default_upload_mbps'] ?? 5))?>" min="0.5" max="1000" step="0.5">
                                         <span class="input-group-addon">Mbit/s</span>
                                     </div>
                                     <span class="help-block">Özel kural atanmamış AD domain kullanıcılarına uygulanacak standart maksimum yükleme hızı.</span>
@@ -409,7 +408,9 @@ foreach ($conf['profiles'] ?? [] as $p) {
                         </div>
                     </div>
                 </div>
+        </form> <!-- CLOSE settingsForm -->
 
+                <!-- ROW 1 Right: Defined Profiles -->
                 <div class="col-md-6">
                     <div class="panel panel-success">
                         <div class="panel-heading" style="display:flex; justify-content:space-between; align-items:center;">
@@ -417,53 +418,58 @@ foreach ($conf['profiles'] ?? [] as $p) {
                             <button type="button" class="btn btn-xs btn-default" onclick="openNewProfileForm();"><i class="fa fa-plus"></i> Yeni Profil Ekle</button>
                         </div>
                         <div class="panel-body">
-                            <!-- Dark Add/Edit Profile Collapse Panel -->
+                            <!-- Dark Add/Edit Profile Collapse Panel with its OWN Form -->
                             <div id="newProfilePanel" class="collapse" style="background:#1e293b; color:#f1f5f9; padding:18px; border-radius:8px; margin-bottom:15px; border:1px solid #3b82f6; box-shadow:0 4px 6px -1px rgba(0,0,0,0.3);">
-                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid #334155; padding-bottom:8px;">
-                                    <h4 style="color:#60a5fa; margin:0; font-weight:700;"><i class="fa fa-tachometer"></i> <span id="profFormTitle">Yeni Hız Profili Tanımla</span></h4>
-                                    <button type="button" class="btn btn-xs btn-default" onclick="$('#newProfilePanel').collapse('hide');" style="color:#94a3b8;"><i class="fa fa-times"></i> Kapat</button>
-                                </div>
-                                
-                                <div class="form-group" style="margin-bottom:12px;">
-                                    <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600;">Profil Adı:</label>
-                                    <div class="col-sm-8">
-                                        <input type="text" name="prof_name" id="prof_name_input" class="form-control" placeholder="Örn: Muhasebe &amp; Finans" style="background:#0f172a; color:#fff; border:1px solid #475569;">
-                                    </div>
-                                </div>
+                                <form method="post" id="profileForm" class="form-horizontal" novalidate onsubmit="return validateProfileForm();">
+                                    <input type="hidden" name="act" value="save_profile">
+                                    <input type="hidden" name="prof_id" id="prof_id_input" value="">
 
-                                <div class="form-group" style="margin-bottom:12px;">
-                                    <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600;">İndirme (Download):</label>
-                                    <div class="col-sm-8">
-                                        <div class="input-group">
-                                            <input type="number" name="prof_down" id="prof_down_input" class="form-control" value="10" min="0.1" max="1000" step="0.5" style="background:#0f172a; color:#fff; border:1px solid #475569;">
-                                            <span class="input-group-addon" style="background:#334155; color:#cbd5e1; border:1px solid #475569;">Mbit/s</span>
+                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid #334155; padding-bottom:8px;">
+                                        <h4 style="color:#60a5fa; margin:0; font-weight:700;"><i class="fa fa-tachometer"></i> <span id="profFormTitle">Yeni Hız Profili Tanımla</span></h4>
+                                        <button type="button" class="btn btn-xs btn-default" onclick="$('#newProfilePanel').collapse('hide');" style="color:#94a3b8;"><i class="fa fa-times"></i> Kapat</button>
+                                    </div>
+                                    
+                                    <div class="form-group" style="margin-bottom:12px;">
+                                        <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600;">Profil Adı:</label>
+                                        <div class="col-sm-8">
+                                            <input type="text" name="prof_name" id="prof_name_input" class="form-control" placeholder="Örn: Muhasebe &amp; Finans" style="background:#0f172a; color:#fff; border:1px solid #475569;">
                                         </div>
                                     </div>
-                                </div>
 
-                                <div class="form-group" style="margin-bottom:12px;">
-                                    <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600;">Yükleme (Upload):</label>
-                                    <div class="col-sm-8">
-                                        <div class="input-group">
-                                            <input type="number" name="prof_up" id="prof_up_input" class="form-control" value="5" min="0.1" max="1000" step="0.5" style="background:#0f172a; color:#fff; border:1px solid #475569;">
-                                            <span class="input-group-addon" style="background:#334155; color:#cbd5e1; border:1px solid #475569;">Mbit/s</span>
+                                    <div class="form-group" style="margin-bottom:12px;">
+                                        <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600;">İndirme (Download):</label>
+                                        <div class="col-sm-8">
+                                            <div class="input-group">
+                                                <input type="number" name="prof_down" id="prof_down_input" class="form-control" value="10" min="0.1" max="1000" step="0.5" style="background:#0f172a; color:#fff; border:1px solid #475569;">
+                                                <span class="input-group-addon" style="background:#334155; color:#cbd5e1; border:1px solid #475569;">Mbit/s</span>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
 
-                                <div class="form-group" style="margin-bottom:12px;">
-                                    <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600;">Açıklama:</label>
-                                    <div class="col-sm-8">
-                                        <input type="text" name="prof_descr" id="prof_descr_input" class="form-control" placeholder="Bu profilin kullanım amacı" style="background:#0f172a; color:#fff; border:1px solid #475569;">
+                                    <div class="form-group" style="margin-bottom:12px;">
+                                        <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600;">Yükleme (Upload):</label>
+                                        <div class="col-sm-8">
+                                            <div class="input-group">
+                                                <input type="number" name="prof_up" id="prof_up_input" class="form-control" value="5" min="0.1" max="1000" step="0.5" style="background:#0f172a; color:#fff; border:1px solid #475569;">
+                                                <span class="input-group-addon" style="background:#334155; color:#cbd5e1; border:1px solid #475569;">Mbit/s</span>
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
 
-                                <div class="form-group" style="margin-bottom:0;">
-                                    <div class="col-sm-offset-4 col-sm-8 text-right">
-                                        <button type="button" class="btn btn-default btn-sm" onclick="$('#newProfilePanel').collapse('hide');" style="margin-right:6px;"><i class="fa fa-times"></i> Vazgeç</button>
-                                        <button type="submit" onclick="this.form.act.value='save_profile';" id="profSubmitBtn" class="btn btn-primary btn-sm"><i class="fa fa-check"></i> Profili Kaydet</button>
+                                    <div class="form-group" style="margin-bottom:12px;">
+                                        <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600;">Açıklama:</label>
+                                        <div class="col-sm-8">
+                                            <input type="text" name="prof_descr" id="prof_descr_input" class="form-control" placeholder="Bu profilin kullanım amacı" style="background:#0f172a; color:#fff; border:1px solid #475569;">
+                                        </div>
                                     </div>
-                                </div>
+
+                                    <div class="form-group" style="margin-bottom:0;">
+                                        <div class="col-sm-offset-4 col-sm-8 text-right">
+                                            <button type="button" class="btn btn-default btn-sm" onclick="$('#newProfilePanel').collapse('hide');" style="margin-right:6px;"><i class="fa fa-times"></i> Vazgeç</button>
+                                            <button type="submit" id="profSubmitBtn" class="btn btn-primary btn-sm"><i class="fa fa-check"></i> Profili Kaydet</button>
+                                        </div>
+                                    </div>
+                                </form>
                             </div>
 
                             <table class="table table-hover table-striped">
@@ -502,7 +508,7 @@ foreach ($conf['profiles'] ?? [] as $p) {
                         </div>
                     </div>
                 </div>
-            </div>
+            </div> <!-- close row 1 -->
 
             <!-- ROW 2: Client & Group QoS Rules -->
             <div class="panel panel-warning" style="margin-top:20px;">
@@ -516,127 +522,130 @@ foreach ($conf['profiles'] ?? [] as $p) {
                         Burada tanımlanan kurallar genel varsayılan hızın önüne geçer.
                     </p>
 
-                    <!-- Dark Add/Edit Client Rule Collapse Panel -->
+                    <!-- Dark Add/Edit Client Rule Collapse Panel with its OWN Form -->
                     <div id="newRulePanel" class="collapse" style="background:#1e293b; color:#f1f5f9; padding:20px; border-radius:8px; margin-bottom:20px; border:1px solid #10b981; box-shadow:0 4px 6px -1px rgba(0,0,0,0.3);">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #334155; padding-bottom:8px;">
-                            <h4 style="color:#34d399; margin:0; font-weight:700;">
-                                <i class="fa fa-tag"></i> <span id="ruleFormTitle">Yeni Hız Kuralı Ata</span>
-                            </h4>
-                            <button type="button" class="btn btn-xs btn-default" onclick="$('#newRulePanel').collapse('hide');" style="color:#94a3b8;"><i class="fa fa-times"></i> Kapat</button>
-                        </div>
+                        <form method="post" id="ruleForm" novalidate onsubmit="return validateRuleForm();">
+                            <input type="hidden" name="act" value="save_client_rule">
+                            <input type="hidden" name="rule_id" id="rule_id_input" value="">
+                            <input type="hidden" name="target_val" id="rule_target_val" value="">
 
-                        <div class="row">
-                            <div class="col-md-3">
-                                <div class="form-group" style="margin-bottom:12px;">
-                                    <label class="control-label" style="color:#cbd5e1; font-weight:600;">Hedef Tipi:</label>
-                                    <select name="target_type" id="rule_target_type" class="form-control" style="background:#0f172a; color:#fff; border:1px solid #475569;" onchange="onTargetTypeChange();">
-                                        <option value="alias">📋 pfSense Alias (IP / Host / Ağ Listesi)</option>
-                                        <option value="group">👥 Active Directory Grubu / Departman</option>
-                                        <option value="user">👤 Active Directory Kullanıcısı / Bilgisayar</option>
-                                        <option value="ip" selected>💻 Tekil İstemci IP Adresi</option>
-                                        <option value="mac">🏷️ Cihaz MAC Adresi</option>
-                                        <option value="subnet">🌐 IP Alt Ağı (Subnet / CIDR)</option>
-                                    </select>
-                                </div>
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #334155; padding-bottom:8px;">
+                                <h4 style="color:#34d399; margin:0; font-weight:700;">
+                                    <i class="fa fa-tag"></i> <span id="ruleFormTitle">Yeni Hız Kuralı Ata</span>
+                                </h4>
+                                <button type="button" class="btn btn-xs btn-default" onclick="$('#newRulePanel').collapse('hide');" style="color:#94a3b8;"><i class="fa fa-times"></i> Kapat</button>
                             </div>
 
-                            <div class="col-md-4">
-                                <div class="form-group" style="margin-bottom:12px;">
-                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-                                        <label class="control-label" style="color:#cbd5e1; font-weight:600; margin:0;">Hedef Değer:</label>
-                                        <a href="javascript:void(0)" onclick="toggleManualTargetInput();" style="color:#38bdf8; font-size:11px; text-decoration:none;"><i class="fa fa-keyboard-o"></i> <span id="manualToggleLabel">Elle Yaz</span></a>
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <div class="form-group" style="margin-bottom:12px;">
+                                        <label class="control-label" style="color:#cbd5e1; font-weight:600;">Hedef Tipi:</label>
+                                        <select name="target_type" id="rule_target_type" class="form-control" style="background:#0f172a; color:#fff; border:1px solid #475569;" onchange="onTargetTypeChange();">
+                                            <option value="alias">📋 pfSense Alias (IP / Host / Ağ Listesi)</option>
+                                            <option value="group">👥 Active Directory Grubu / Departman</option>
+                                            <option value="user">👤 Active Directory Kullanıcısı / Bilgisayar</option>
+                                            <option value="ip" selected>💻 Tekil İstemci IP Adresi</option>
+                                            <option value="mac">🏷️ Cihaz MAC Adresi</option>
+                                            <option value="subnet">🌐 IP Alt Ağı (Subnet / CIDR)</option>
+                                        </select>
                                     </div>
+                                </div>
 
-                                    <!-- Alias Select -->
-                                    <div id="wrap_alias" class="target-field-wrap" style="display:none;">
-                                        <select id="sel_alias" class="form-control" style="background:#0f172a; color:#fff; border:1px solid #475569;" onchange="syncTargetVal(this.value)">
-                                            <option value="">-- pfSense Alias Seçiniz (<?=count($meta_aliases)?> Alias) --</option>
-                                            <?php foreach ($meta_aliases as $als): ?>
-                                                <option value="<?=htmlspecialchars($als['name'])?>"><?=htmlspecialchars($als['name'])?> (<?=htmlspecialchars($als['type'])?>: <?=htmlspecialchars(mb_substr($als['address'], 0, 30))?>)</option>
+                                <div class="col-md-4">
+                                    <div class="form-group" style="margin-bottom:12px;">
+                                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                                            <label class="control-label" style="color:#cbd5e1; font-weight:600; margin:0;">Hedef Değer:</label>
+                                            <a href="javascript:void(0)" onclick="toggleManualTargetInput();" style="color:#38bdf8; font-size:11px; text-decoration:none;"><i class="fa fa-keyboard-o"></i> <span id="manualToggleLabel">Elle Yaz</span></a>
+                                        </div>
+
+                                        <!-- Alias Select -->
+                                        <div id="wrap_alias" class="target-field-wrap" style="display:none;">
+                                            <select id="sel_alias" class="form-control" style="background:#0f172a; color:#fff; border:1px solid #475569;" onchange="syncTargetVal(this.value)">
+                                                <option value="">-- pfSense Alias Seçiniz (<?=count($meta_aliases)?> Alias) --</option>
+                                                <?php foreach ($meta_aliases as $als): ?>
+                                                    <option value="<?=htmlspecialchars($als['name'])?>"><?=htmlspecialchars($als['name'])?> (<?=htmlspecialchars($als['type'])?>: <?=htmlspecialchars(mb_substr($als['address'], 0, 30))?>)</option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        </div>
+
+                                        <!-- AD Group Select -->
+                                        <div id="wrap_group" class="target-field-wrap" style="display:none;">
+                                            <select id="sel_group" class="form-control" style="background:#0f172a; color:#fff; border:1px solid #475569;" onchange="syncTargetVal(this.value)">
+                                                <option value="">-- AD Grubu / Departman Seçiniz (<?=count($meta_groups)?> Grup) --</option>
+                                                <?php foreach ($meta_groups as $grp): ?>
+                                                    <option value="<?=htmlspecialchars($grp)?>"><?=htmlspecialchars($grp)?></option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        </div>
+
+                                        <!-- AD User Select -->
+                                        <div id="wrap_user" class="target-field-wrap" style="display:none;">
+                                            <select id="sel_user" class="form-control" style="background:#0f172a; color:#fff; border:1px solid #475569;" onchange="syncTargetVal(this.value)">
+                                                <option value="">-- AD Kullanıcısı / PC Seçiniz (<?=count($meta_users)?> Kullanıcı) --</option>
+                                                <?php foreach ($meta_users as $usr): ?>
+                                                    <option value="<?=htmlspecialchars($usr['username'])?>"><?=htmlspecialchars($usr['username'])?> <?=!empty($usr['display_name']) && $usr['display_name'] !== $usr['username'] ? '('.htmlspecialchars($usr['display_name']).')' : ''?></option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        </div>
+
+                                        <!-- IP Input with LAN Clients Datalist -->
+                                        <div id="wrap_ip" class="target-field-wrap">
+                                            <input type="text" id="sel_ip" class="form-control" list="dl_lan_ips" placeholder="Örn: 192.168.2.226" style="background:#0f172a; color:#fff; border:1px solid #475569;" oninput="syncTargetVal(this.value)">
+                                            <datalist id="dl_lan_ips">
+                                                <?php foreach ($meta_clients as $cli): ?>
+                                                    <option value="<?=htmlspecialchars($cli['ip'])?>"><?=htmlspecialchars($cli['name'])?> (<?=htmlspecialchars($cli['mac'])?>)</option>
+                                                <?php endforeach; ?>
+                                            </datalist>
+                                        </div>
+
+                                        <!-- MAC Input with LAN MACs Datalist -->
+                                        <div id="wrap_mac" class="target-field-wrap" style="display:none;">
+                                            <input type="text" id="sel_mac" class="form-control" list="dl_lan_macs" placeholder="Örn: a6:73:5a:e1:34:c1" style="background:#0f172a; color:#fff; border:1px solid #475569;" oninput="syncTargetVal(this.value)">
+                                            <datalist id="dl_lan_macs">
+                                                <?php foreach ($meta_clients as $cli): ?>
+                                                    <option value="<?=htmlspecialchars($cli['mac'])?>"><?=htmlspecialchars($cli['ip'])?> - <?=htmlspecialchars($cli['name'])?></option>
+                                                <?php endforeach; ?>
+                                            </datalist>
+                                        </div>
+
+                                        <!-- Subnet Input -->
+                                        <div id="wrap_subnet" class="target-field-wrap" style="display:none;">
+                                            <input type="text" id="sel_subnet" class="form-control" placeholder="Örn: 192.168.2.0/24" style="background:#0f172a; color:#fff; border:1px solid #475569;" oninput="syncTargetVal(this.value)">
+                                        </div>
+
+                                        <!-- Fallback Manual Input -->
+                                        <div id="wrap_manual" class="target-field-wrap" style="display:none;">
+                                            <input type="text" id="sel_manual" class="form-control" placeholder="Özel Değer Yazınız..." style="background:#0f172a; color:#fff; border:1px solid #475569;" oninput="syncTargetVal(this.value)">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="col-md-2">
+                                    <div class="form-group" style="margin-bottom:12px;">
+                                        <label class="control-label" style="color:#cbd5e1; font-weight:600;">Uygulanacak Profil:</label>
+                                        <select name="target_profile" id="rule_target_profile" class="form-control" style="background:#0f172a; color:#fff; border:1px solid #475569;">
+                                            <?php foreach ($conf['profiles'] as $p): ?>
+                                                <option value="<?=htmlspecialchars($p['id'])?>">
+                                                    <?=htmlspecialchars($p['name'])?> (<?=htmlspecialchars((string)$p['down_mbps'])?>M / <?=htmlspecialchars((string)$p['up_mbps'])?>M)
+                                                </option>
                                             <?php endforeach; ?>
                                         </select>
                                     </div>
+                                </div>
 
-                                    <!-- AD Group Select -->
-                                    <div id="wrap_group" class="target-field-wrap" style="display:none;">
-                                        <select id="sel_group" class="form-control" style="background:#0f172a; color:#fff; border:1px solid #475569;" onchange="syncTargetVal(this.value)">
-                                            <option value="">-- AD Grubu / Departman Seçiniz (<?=count($meta_groups)?> Grup) --</option>
-                                            <?php foreach ($meta_groups as $grp): ?>
-                                                <option value="<?=htmlspecialchars($grp)?>"><?=htmlspecialchars($grp)?></option>
-                                            <?php endforeach; ?>
-                                        </select>
+                                <div class="col-md-3">
+                                    <div class="form-group" style="margin-bottom:12px;">
+                                        <label class="control-label" style="color:#cbd5e1; font-weight:600;">Açıklama / Not:</label>
+                                        <input type="text" name="rule_descr" id="rule_descr" class="form-control" placeholder="Örn: Muhasebe Müdürü PC" style="background:#0f172a; color:#fff; border:1px solid #475569;">
                                     </div>
-
-                                    <!-- AD User Select -->
-                                    <div id="wrap_user" class="target-field-wrap" style="display:none;">
-                                        <select id="sel_user" class="form-control" style="background:#0f172a; color:#fff; border:1px solid #475569;" onchange="syncTargetVal(this.value)">
-                                            <option value="">-- AD Kullanıcısı / PC Seçiniz (<?=count($meta_users)?> Kullanıcı) --</option>
-                                            <?php foreach ($meta_users as $usr): ?>
-                                                <option value="<?=htmlspecialchars($usr['username'])?>"><?=htmlspecialchars($usr['username'])?> <?=!empty($usr['display_name']) && $usr['display_name'] !== $usr['username'] ? '('.htmlspecialchars($usr['display_name']).')' : ''?></option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </div>
-
-                                    <!-- IP Input with LAN Clients Datalist -->
-                                    <div id="wrap_ip" class="target-field-wrap">
-                                        <input type="text" id="sel_ip" class="form-control" list="dl_lan_ips" placeholder="Örn: 192.168.2.226" style="background:#0f172a; color:#fff; border:1px solid #475569;" oninput="syncTargetVal(this.value)">
-                                        <datalist id="dl_lan_ips">
-                                            <?php foreach ($meta_clients as $cli): ?>
-                                                <option value="<?=htmlspecialchars($cli['ip'])?>"><?=htmlspecialchars($cli['name'])?> (<?=htmlspecialchars($cli['mac'])?>)</option>
-                                            <?php endforeach; ?>
-                                        </datalist>
-                                    </div>
-
-                                    <!-- MAC Input with LAN MACs Datalist -->
-                                    <div id="wrap_mac" class="target-field-wrap" style="display:none;">
-                                        <input type="text" id="sel_mac" class="form-control" list="dl_lan_macs" placeholder="Örn: a6:73:5a:e1:34:c1" style="background:#0f172a; color:#fff; border:1px solid #475569;" oninput="syncTargetVal(this.value)">
-                                        <datalist id="dl_lan_macs">
-                                            <?php foreach ($meta_clients as $cli): ?>
-                                                <option value="<?=htmlspecialchars($cli['mac'])?>"><?=htmlspecialchars($cli['ip'])?> - <?=htmlspecialchars($cli['name'])?></option>
-                                            <?php endforeach; ?>
-                                        </datalist>
-                                    </div>
-
-                                    <!-- Subnet Input -->
-                                    <div id="wrap_subnet" class="target-field-wrap" style="display:none;">
-                                        <input type="text" id="sel_subnet" class="form-control" placeholder="Örn: 192.168.2.0/24" style="background:#0f172a; color:#fff; border:1px solid #475569;" oninput="syncTargetVal(this.value)">
-                                    </div>
-
-                                    <!-- Fallback Manual Input -->
-                                    <div id="wrap_manual" class="target-field-wrap" style="display:none;">
-                                        <input type="text" id="sel_manual" class="form-control" placeholder="Özel Değer Yazınız..." style="background:#0f172a; color:#fff; border:1px solid #475569;" oninput="syncTargetVal(this.value)">
-                                    </div>
-
-                                    <!-- Real Value Field for POST -->
-                                    <input type="hidden" name="target_val" id="rule_target_val" required>
                                 </div>
                             </div>
 
-                            <div class="col-md-2">
-                                <div class="form-group" style="margin-bottom:12px;">
-                                    <label class="control-label" style="color:#cbd5e1; font-weight:600;">Uygulanacak Profil:</label>
-                                    <select name="target_profile" id="rule_target_profile" class="form-control" style="background:#0f172a; color:#fff; border:1px solid #475569;">
-                                        <?php foreach ($conf['profiles'] as $p): ?>
-                                            <option value="<?=htmlspecialchars($p['id'])?>">
-                                                <?=htmlspecialchars($p['name'])?> (<?=htmlspecialchars((string)$p['down_mbps'])?>M / <?=htmlspecialchars((string)$p['up_mbps'])?>M)
-                                            </option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
+                            <div class="text-right" style="border-top:1px solid #334155; padding-top:12px; margin-top:10px;">
+                                <button type="button" class="btn btn-default btn-sm" onclick="$('#newRulePanel').collapse('hide');" style="margin-right:6px;"><i class="fa fa-times"></i> Vazgeç</button>
+                                <button type="submit" id="ruleSubmitBtn" class="btn btn-success btn-sm"><i class="fa fa-check"></i> Kuralı Kaydet &amp; Uygula</button>
                             </div>
-
-                            <div class="col-md-3">
-                                <div class="form-group" style="margin-bottom:12px;">
-                                    <label class="control-label" style="color:#cbd5e1; font-weight:600;">Açıklama / Not:</label>
-                                    <input type="text" name="rule_descr" id="rule_descr" class="form-control" placeholder="Örn: Muhasebe Müdürü PC" style="background:#0f172a; color:#fff; border:1px solid #475569;">
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="text-right" style="border-top:1px solid #334155; padding-top:12px; margin-top:10px;">
-                            <button type="button" class="btn btn-default btn-sm" onclick="$('#newRulePanel').collapse('hide');" style="margin-right:6px;"><i class="fa fa-times"></i> Vazgeç</button>
-                            <button type="submit" onclick="this.form.act.value='save_client_rule';" id="ruleSubmitBtn" class="btn btn-success btn-sm"><i class="fa fa-check"></i> Kuralı Kaydet &amp; Uygula</button>
-                        </div>
+                        </form>
                     </div>
 
                     <!-- Client Rules Table -->
@@ -697,7 +706,6 @@ foreach ($conf['profiles'] ?? [] as $p) {
                     </table>
                 </div>
             </div>
-        </form>
 
         <hr style="margin:25px 0; border-color:#334155;">
 
@@ -735,49 +743,74 @@ foreach ($conf['profiles'] ?? [] as $p) {
     </div>
 </div>
 
-<form method="post" id="killStateForm" style="display:none;">
-    <input type="hidden" name="act" value="kill_host_states">
-    <input type="hidden" name="kill_ip" id="killStateIp" value="">
+<!-- Dedicated Action Form for Deletions and Killing States -->
+<form method="post" id="actionForm" style="display:none;" novalidate>
+    <input type="hidden" name="act" id="action_act" value="">
+    <input type="hidden" name="prof_id" id="action_prof_id" value="">
+    <input type="hidden" name="rule_id" id="action_rule_id" value="">
+    <input type="hidden" name="kill_ip" id="action_kill_ip" value="">
 </form>
 
 <script>
 // Profile Management JS
+function validateProfileForm() {
+    var name = document.getElementById('prof_name_input').value.trim();
+    var down = parseFloat(document.getElementById('prof_down_input').value);
+    var up = parseFloat(document.getElementById('prof_up_input').value);
+    if (!name) {
+        alert('Lütfen bir profil adı giriniz.');
+        document.getElementById('prof_name_input').focus();
+        return false;
+    }
+    if (isNaN(down) || down <= 0) {
+        alert('Lütfen geçerli bir indirme hızı (Mbit/s) giriniz.');
+        document.getElementById('prof_down_input').focus();
+        return false;
+    }
+    if (isNaN(up) || up <= 0) {
+        alert('Lütfen geçerli bir yükleme hızı (Mbit/s) giriniz.');
+        document.getElementById('prof_up_input').focus();
+        return false;
+    }
+    return true;
+}
+
 function openNewProfileForm() {
     document.getElementById('profFormTitle').innerText = 'Yeni Hız Profili Tanımla';
-    document.getElementById('main_prof_id').value = '';
+    document.getElementById('prof_id_input').value = '';
     document.getElementById('prof_name_input').value = '';
     document.getElementById('prof_down_input').value = '10';
     document.getElementById('prof_up_input').value = '5';
     document.getElementById('prof_descr_input').value = '';
     document.getElementById('profSubmitBtn').innerHTML = '<i class="fa fa-check"></i> Profili Kaydet';
     $('#newProfilePanel').collapse('show');
-    document.getElementById('prof_name_input').focus();
+    setTimeout(function() { document.getElementById('prof_name_input').focus(); }, 150);
 }
 
 function editProfile(p) {
     document.getElementById('profFormTitle').innerText = 'Profili Düzenle: ' + p.name;
-    document.getElementById('main_prof_id').value = p.id;
+    document.getElementById('prof_id_input').value = p.id;
     document.getElementById('prof_name_input').value = p.name;
     document.getElementById('prof_down_input').value = p.down_mbps;
     document.getElementById('prof_up_input').value = p.up_mbps;
     document.getElementById('prof_descr_input').value = p.descr || '';
     document.getElementById('profSubmitBtn').innerHTML = '<i class="fa fa-check"></i> Değişiklikleri Güncelle';
     $('#newProfilePanel').collapse('show');
-    document.getElementById('prof_down_input').focus();
+    setTimeout(function() { document.getElementById('prof_down_input').focus(); }, 150);
 }
 
 function deleteProfile(id, name) {
     if (!confirm("'" + name + "' profilini silmek istediğinize emin misiniz?")) return;
-    var f = document.getElementById('mainForm');
-    f.act.value = 'del_profile';
-    f.prof_id.value = id;
+    var f = document.getElementById('actionForm');
+    document.getElementById('action_act').value = 'del_profile';
+    document.getElementById('action_prof_id').value = id;
     f.submit();
 }
 
 // Client Rule Target Type & Field Dynamic Switcher
 var isManualMode = false;
 function syncTargetVal(val) {
-    document.getElementById('rule_target_val').value = val.trim();
+    document.getElementById('rule_target_val').value = (val || '').trim();
 }
 
 function onTargetTypeChange() {
@@ -820,9 +853,18 @@ function toggleManualTargetInput() {
     }
 }
 
+function validateRuleForm() {
+    var val = document.getElementById('rule_target_val').value.trim();
+    if (!val) {
+        alert('Lütfen kural için bir hedef değer (IP, Alias, AD Grubu vb.) seçiniz veya giriniz.');
+        return false;
+    }
+    return true;
+}
+
 function openNewRuleForm() {
     document.getElementById('ruleFormTitle').innerText = 'Yeni Hız Kuralı Ata';
-    document.getElementById('main_rule_id').value = '';
+    document.getElementById('rule_id_input').value = '';
     document.getElementById('rule_target_type').value = 'ip';
     document.getElementById('rule_target_val').value = '';
     document.getElementById('rule_target_profile').selectedIndex = 0;
@@ -834,7 +876,7 @@ function openNewRuleForm() {
 
 function editClientRule(r) {
     document.getElementById('ruleFormTitle').innerText = 'Kuralı Düzenle: ' + r.target_val;
-    document.getElementById('main_rule_id').value = r.id;
+    document.getElementById('rule_id_input').value = r.id;
     document.getElementById('rule_target_type').value = r.target_type;
     document.getElementById('rule_target_val').value = r.target_val;
     document.getElementById('rule_target_profile').value = r.profile_id;
@@ -843,13 +885,11 @@ function editClientRule(r) {
     
     onTargetTypeChange();
 
-    // Populate the field corresponding to target_type
     var wrap = document.getElementById('wrap_' + r.target_type);
     if (wrap) {
         var input = wrap.querySelector('input, select');
         if (input) {
             input.value = r.target_val;
-            // If select couldn't select value, switch to manual
             if (input.tagName === 'SELECT' && input.value !== r.target_val) {
                 toggleManualTargetInput();
                 document.getElementById('sel_manual').value = r.target_val;
@@ -862,9 +902,9 @@ function editClientRule(r) {
 
 function deleteClientRule(id, target) {
     if (!confirm("'" + target + "' için tanımlı hız kuralını kaldırmak istediğinize emin misiniz?")) return;
-    var f = document.getElementById('mainForm');
-    f.act.value = 'del_client_rule';
-    f.rule_id.value = id;
+    var f = document.getElementById('actionForm');
+    document.getElementById('action_act').value = 'del_client_rule';
+    document.getElementById('action_rule_id').value = id;
     f.submit();
 }
 
@@ -885,8 +925,10 @@ function quickAssignProfile(ip, mac, user, currentProfId) {
 // Kill State Function
 function killHostState(ip) {
     if (!confirm(ip + ' için aktif oturumları sıfırlamak istediğinize emin misiniz?')) return;
-    document.getElementById('killStateIp').value = ip;
-    document.getElementById('killStateForm').submit();
+    var f = document.getElementById('actionForm');
+    document.getElementById('action_act').value = 'kill_host_states';
+    document.getElementById('action_kill_ip').value = ip;
+    f.submit();
 }
 
 // Live Traffic Polling
