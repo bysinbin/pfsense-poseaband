@@ -14,7 +14,13 @@ $conf = poseaband_get_config();
 
 // Handle AJAX live traffic query
 if (isset($_GET['ajax_traffic'])) {
-    header('Content-Type: application/json');
+    session_write_close();
+    header('Content-Type: application/json; charset=utf-8');
+    $cache_file = '/tmp/poseaband_cache.json';
+    if (file_exists($cache_file) && (time() - filemtime($cache_file) < 3)) {
+        $cached = @file_get_contents($cache_file);
+        if ($cached) { echo $cached; exit; }
+    }
     $live_data = [];
     
     // Read AD users
@@ -34,7 +40,7 @@ if (isset($_GET['ajax_traffic'])) {
     }
     
     // Run iftop short sample
-    $iftop_raw = shell_exec("iftop -t -s 2 -n -N -i vtnet1 2>/dev/null");
+    $iftop_raw = shell_exec("/usr/local/sbin/iftop -t -s 1 -n -N -i vtnet1 2>/dev/null");
     $lines = explode("\n", (string)$iftop_raw);
     
     function pb_parse_rate($str) {
