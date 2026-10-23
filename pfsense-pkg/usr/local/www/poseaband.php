@@ -370,7 +370,19 @@ if ($savemsg) {
     </div>
 </div>
 
+
+<form method="post" id="killStateForm" style="display:none;">
+    <input type="hidden" name="act" value="kill_host_states">
+    <input type="hidden" name="kill_ip" id="killStateIp" value="">
+</form>
+
 <script>
+function killHostState(ip) {
+    if (!confirm(ip + ' için aktif oturumları sıfırlamak istediğinize emin misiniz?')) return;
+    document.getElementById('killStateIp').value = ip;
+    document.getElementById('killStateForm').submit();
+}
+
 function refreshBandTraffic() {
     var tbody = document.getElementById('pbTrafficTbody');
     var badge = document.getElementById('pbStatusBadge');
@@ -398,12 +410,8 @@ function refreshBandTraffic() {
                     '<td style="' + downColor + '"><i class="fa-solid fa-arrow-down"></i> ' + c.down_mbps.toFixed(2) + ' Mbit/s</td>' +
                     '<td><i class="fa-solid fa-arrow-up text-muted"></i> ' + c.up_mbps.toFixed(2) + ' Mbit/s</td>' +
                     '<td><small class="text-muted">' + (c.remote || '-') + '</small></td>' +
-                    '<td>' +
-                        '<form method="post" style="display:inline;" onsubmit="return confirm(\'' + c.ip + ' için aktif oturumları sıfırlamak istediğinize emin misiniz?\');">' +
-                            '<input type="hidden" name="act" value="kill_host_states">' +
-                            '<input type="hidden" name="kill_ip" value="' + c.ip + '">' +
-                            '<button type="submit" class="btn btn-xs btn-danger" title="Oturumları Kes"><i class="fa-solid fa-plug-circle-xmark"></i> Oturumu Kes</button>' +
-                        '</form>' +
+                                        '<td>' +
+                        '<button type="button" class="btn btn-xs btn-danger" onclick="killHostState(\'' + c.ip + '\')" title="Oturumları Kes"><i class="fa fa-cut"></i> Oturumu Kes</button>' +
                     '</td>';
                 tbody.appendChild(tr);
             });
