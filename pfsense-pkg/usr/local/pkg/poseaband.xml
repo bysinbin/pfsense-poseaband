@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!DOCTYPE packagegui SYSTEM "../schema/packages.dtd">
+<packagegui>
+    <name>poseaband</name>
+    <version>1.0.0</version>
+    <title>Services: PoseaBand (Bant Genişliği &amp; QoS Yöneticisi)</title>
+    <include_file>/usr/local/pkg/poseaband.inc</include_file>
+    <menu>
+        <name>PoseaBand (QoS)</name>
+        <section>Services</section>
+        <configfile>poseaband.xml</configfile>
+        <url>/poseaband.php</url>
+    </menu>
+    <tabs>
+        <tab>
+            <text>Bant Genişliği &amp; Hız Sınırları</text>
+            <url>/poseaband.php</url>
+            <active/>
+        </tab>
+    </tabs>
+</packagegui>
