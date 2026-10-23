@@ -555,6 +555,8 @@ function poseaband_sync_system($conf = null) {
 
         // Build specific client rules
         $generated_client_rules = [];
+        $explicit_ips = [];
+        $rule_seq = 1;
         foreach ($conf['client_rules'] ?? [] as $cr) {
             if (empty($cr['enabled'])) continue;
             $pid = preg_replace('/[^a-zA-Z0-9_]/', '', $cr['profile_id'] ?? '');
@@ -566,6 +568,7 @@ function poseaband_sync_system($conf = null) {
 
             if ($t_type === 'ip') {
                 $targets[] = ['address' => $t_val];
+                $explicit_ips[$t_val] = true;
             } elseif ($t_type === 'subnet') {
                 $targets[] = ['network' => $t_val];
             } elseif ($t_type === 'alias') {
@@ -574,11 +577,13 @@ function poseaband_sync_system($conf = null) {
                 $m_ip = $arp_map[strtolower($t_val)] ?? null;
                 if ($m_ip) {
                     $targets[] = ['address' => $m_ip];
+                    $explicit_ips[$m_ip] = true;
                 }
             } elseif ($t_type === 'user') {
                 foreach ($ad_sessions as $u_ip => $u_info) {
                     if (strcasecmp($u_info['username'] ?? '', $t_val) === 0 || strcasecmp($u_info['hostname'] ?? '', $t_val) === 0) {
                         $targets[] = ['address' => $u_ip];
+                        $explicit_ips[$u_ip] = true;
                     }
                 }
             } elseif ($t_type === 'group') {
@@ -597,6 +602,7 @@ function poseaband_sync_system($conf = null) {
                     }
                     if ($g_match) {
                         $targets[] = ['address' => $u_ip];
+                        $explicit_ips[$u_ip] = true;
                     }
                 }
             }
@@ -604,7 +610,7 @@ function poseaband_sync_system($conf = null) {
             foreach ($targets as $src_def) {
                 $generated_client_rules[] = [
                     'id' => '',
-                    'tracker' => (string)time(),
+                    'tracker' => (string)(time() + ($rule_seq++)),
                     'type' => 'pass',
                     'interface' => 'lan',
                     'ipprotocol' => 'inet',
@@ -624,6 +630,7 @@ function poseaband_sync_system($conf = null) {
             $guest_ips = [];
             foreach ($arp_map as $mac => $ip) {
                 if (!str_starts_with($ip, '192.168.')) continue;
+                if (isset($explicit_ips[$ip])) continue; // Exclude IPs with explicit QoS rules
                 $is_ad = false;
                 if (isset($ad_sessions[$ip]) && ($ad_sessions[$ip]['status'] ?? '') === 'authenticated') {
                     $is_ad = true;
@@ -725,6 +732,13 @@ function poseaband_sync_system($conf = null) {
 
     write_config("PoseaBand: " . ($enabled ? "Synchronized QoS Profiles and Rules" : "Disabled QoS Limiting"));
     filter_configure();
+    if ($enabled && !empty($explicit_ips)) {
+        foreach (array_keys($explicit_ips) as $ex_ip) {
+            if (filter_var($ex_ip, FILTER_VALIDATE_IP)) {
+                @shell_exec("/sbin/pfctl -t PoseaBand_Guests -T delete " . escapeshellarg($ex_ip) . " 2>/dev/null");
+            }
+        }
+    }
     return true;
 }
 

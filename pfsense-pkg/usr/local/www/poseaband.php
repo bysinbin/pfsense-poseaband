@@ -274,6 +274,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             poseaband_save_config($conf);
             poseaband_sync_system($conf);
+            if ($t_type === 'ip' && filter_var($t_val, FILTER_VALIDATE_IP)) {
+                @shell_exec("/sbin/pfctl -t PoseaBand_Guests -T delete " . escapeshellarg($t_val) . " 2>/dev/null");
+                @shell_exec("/sbin/pfctl -k " . escapeshellarg($t_val) . " 2>/dev/null");
+            }
         }
 
     } elseif ($action === 'del_client_rule') {
