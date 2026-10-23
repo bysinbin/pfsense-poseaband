@@ -146,29 +146,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         poseaband_save_config($conf);
         poseaband_sync_system($conf);
         $savemsg = "PoseaBand ayarları başarıyla kaydedildi ve sisteme uygulandı.";
-    } elseif ($action === 'add_profile') {
-        $p_id = 'prof_' . substr(md5(uniqid()), 0, 6);
+    } elseif ($action === 'save_profile') {
+        $p_id = trim($_POST['prof_id'] ?? '');
         $p_name = trim($_POST['prof_name'] ?? 'Yeni Profil');
         $p_down = max(0.5, floatval($_POST['prof_down'] ?? 5));
         $p_up = max(0.5, floatval($_POST['prof_up'] ?? 5));
         $p_descr = trim($_POST['prof_descr'] ?? '');
         
-        $conf['profiles'][] = [
-            'id' => $p_id,
-            'name' => $p_name,
-            'down_mbps' => $p_down,
-            'up_mbps' => $p_up,
-            'descr' => $p_descr
-        ];
+        $found = false;
+        if (!empty($p_id)) {
+            foreach ($conf['profiles'] as &$p) {
+                if ($p['id'] === $p_id) {
+                    $p['name'] = $p_name;
+                    $p['down_mbps'] = $p_down;
+                    $p['up_mbps'] = $p_up;
+                    $p['descr'] = $p_descr;
+                    $found = true;
+                    break;
+                }
+            }
+            unset($p);
+        }
+        
+        if (!$found) {
+            $p_id = 'prof_' . substr(md5(uniqid()), 0, 6);
+            $conf['profiles'][] = [
+                'id' => $p_id,
+                'name' => $p_name,
+                'down_mbps' => $p_down,
+                'up_mbps' => $p_up,
+                'descr' => $p_descr
+            ];
+            $savemsg = "Yeni hız profili ('{$p_name}') başarıyla eklendi.";
+        } else {
+            $savemsg = "Hız profili ('{$p_name}') başarıyla güncellendi.";
+        }
         poseaband_save_config($conf);
-        $savemsg = "Hız profili başarıyla eklendi.";
     } elseif ($action === 'del_profile') {
-        $p_id = $_POST['prof_id'] ?? '';
+        $p_id = trim($_POST['prof_id'] ?? '');
         $conf['profiles'] = array_values(array_filter($conf['profiles'], function($p) use ($p_id) {
             return $p['id'] !== $p_id;
         }));
         poseaband_save_config($conf);
-        $savemsg = "Profil silindi.";
+        $savemsg = "Profil başarıyla silindi.";
     } elseif ($action === 'kill_host_states') {
         $kill_ip = escapeshellarg(trim($_POST['kill_ip'] ?? ''));
         if (!empty($kill_ip)) {
@@ -205,7 +225,8 @@ if ($savemsg) {
             Her cihaza bağımsız dinamik bant genişliği havuzu (Per-Host Limiter) atar.
         </p>
 
-        <form method="post" class="form-horizontal">
+        <form method="post" id="mainForm" class="form-horizontal">
+            <input type="hidden" name="prof_id" id="main_prof_id" value="">
             <input type="hidden" name="act" value="save_settings">
 
             <div class="alert <?=!empty($conf['enabled']) ? 'alert-success' : 'alert-warning'?>" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:12px 18px; border-radius:6px;">
@@ -276,59 +297,91 @@ if ($savemsg) {
                     <div class="panel panel-default">
                         <div class="panel-heading" style="display:flex; justify-content:space-between; align-items:center;">
                             <strong><i class="fa fa-bars"></i> Tanımlı Hız Profilleri</strong>
-                            <button type="button" class="btn btn-xs btn-success" data-toggle="collapse" data-target="#newProfilePanel"><i class="fa fa-plus"></i> Yeni Profil Ekle</button>
+                            <button type="button" class="btn btn-xs btn-success" onclick="openNewProfileForm();"><i class="fa fa-plus"></i> Yeni Profil Ekle</button>
                         </div>
                         <div class="panel-body">
-                            <div id="newProfilePanel" class="collapse" style="background:#f8fafc; padding:15px; border-radius:6px; margin-bottom:15px; border:1px solid #e2e8f0;">
-                                <h4>Yeni Hız Profili</h4>
-                                <div class="form-group">
-                                    <label class="col-sm-4 control-label">Profil Adı:</label>
-                                    <div class="col-sm-8"><input type="text" name="prof_name" class="form-control" placeholder="Örn: Muhasebe / VIP"></div>
+                            <!-- Clean Dark-Themed Add / Edit Profile Panel -->
+                            <div id="newProfilePanel" class="collapse" style="background:#1e293b; color:#f1f5f9; padding:18px; border-radius:8px; margin-bottom:18px; border:1px solid #3b82f6; box-shadow:0 4px 6px -1px rgba(0,0,0,0.3);">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid #334155; padding-bottom:8px;">
+                                    <h4 style="color:#60a5fa; margin:0; font-weight:700;">
+                                        <i class="fa fa-sliders"></i> <span id="profFormTitle">Yeni Hız Profili Tanımla</span>
+                                    </h4>
+                                    <button type="button" class="btn btn-xs btn-default" onclick="$('#newProfilePanel').collapse('hide');" style="color:#94a3b8;"><i class="fa fa-times"></i> Kapat</button>
                                 </div>
-                                <div class="form-group">
-                                    <label class="col-sm-4 control-label">Download / Upload:</label>
-                                    <div class="col-sm-4"><input type="number" name="prof_down" class="form-control" placeholder="Down Mb" value="10"></div>
-                                    <div class="col-sm-4"><input type="number" name="prof_up" class="form-control" placeholder="Up Mb" value="10"></div>
+
+                                <div class="form-group" style="margin-bottom:12px;">
+                                    <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600; text-align:right; padding-top:7px;">Profil Adı:</label>
+                                    <div class="col-sm-8">
+                                        <input type="text" name="prof_name" id="prof_name_input" class="form-control" placeholder="Örn: Muhasebe / VIP" style="background:#0f172a; color:#fff; border:1px solid #475569;">
+                                    </div>
                                 </div>
-                                <div class="form-group">
-                                    <label class="col-sm-4 control-label">Açıklama:</label>
-                                    <div class="col-sm-8"><input type="text" name="prof_descr" class="form-control" placeholder="Profil detayı"></div>
+
+                                <div class="form-group" style="margin-bottom:12px;">
+                                    <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600; text-align:right; padding-top:7px;">Download (İndirme):</label>
+                                    <div class="col-sm-8">
+                                        <div class="input-group">
+                                            <input type="number" step="0.5" min="0.5" max="1000" name="prof_down" id="prof_down_input" class="form-control" placeholder="Mbit/s" value="10" style="background:#0f172a; color:#fff; border:1px solid #475569;">
+                                            <span class="input-group-addon" style="background:#334155; color:#93c5fd; border:1px solid #475569; font-weight:bold;">Mbit/s</span>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div class="text-right">
-                                    <button type="button" class="btn btn-default btn-sm" data-toggle="collapse" data-target="#newProfilePanel">Vazgeç</button>
-                                    <button type="submit" onclick="this.form.act.value='add_profile';" class="btn btn-success btn-sm">Profili Kaydet</button>
+
+                                <div class="form-group" style="margin-bottom:12px;">
+                                    <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600; text-align:right; padding-top:7px;">Upload (Yükleme):</label>
+                                    <div class="col-sm-8">
+                                        <div class="input-group">
+                                            <input type="number" step="0.5" min="0.5" max="1000" name="prof_up" id="prof_up_input" class="form-control" placeholder="Mbit/s" value="5" style="background:#0f172a; color:#fff; border:1px solid #475569;">
+                                            <span class="input-group-addon" style="background:#334155; color:#fde68a; border:1px solid #475569; font-weight:bold;">Mbit/s</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="form-group" style="margin-bottom:14px;">
+                                    <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600; text-align:right; padding-top:7px;">Açıklama:</label>
+                                    <div class="col-sm-8">
+                                        <input type="text" name="prof_descr" id="prof_descr_input" class="form-control" placeholder="Profil açıklaması veya departman detayı" style="background:#0f172a; color:#fff; border:1px solid #475569;">
+                                    </div>
+                                </div>
+
+                                <div class="text-right" style="border-top:1px solid #334155; padding-top:10px;">
+                                    <button type="button" class="btn btn-default btn-sm" onclick="$('#newProfilePanel').collapse('hide');" style="margin-right:6px;"><i class="fa fa-times"></i> Vazgeç</button>
+                                    <button type="submit" onclick="this.form.act.value='save_profile';" id="profSubmitBtn" class="btn btn-success btn-sm"><i class="fa fa-check"></i> Profili Kaydet</button>
                                 </div>
                             </div>
 
-                            <table class="table table-striped table-condensed">
+                            <table class="table table-hover table-striped table-condensed">
                                 <thead>
-                                    <tr>
-                                        <th>Profil</th>
+                                    <tr style="background:#090d16; color:#f8fafc;">
+                                        <th>Profil Adı</th>
                                         <th>İndirme</th>
                                         <th>Yükleme</th>
                                         <th>Açıklama</th>
-                                        <th>İşlem</th>
+                                        <th style="text-align:right; width:130px;">İşlemler</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <?php foreach ($conf['profiles'] as $p): ?>
                                     <tr>
-                                        <td><strong><?=htmlspecialchars($p['name'])?></strong></td>
-                                        <td><span class="label label-info"><?=htmlspecialchars((string)$p['down_mbps'])?> Mbit/s</span></td>
-                                        <td><span class="label label-warning"><?=htmlspecialchars((string)$p['up_mbps'])?> Mbit/s</span></td>
+                                        <td><strong style="color:#f8fafc; font-size:13px;"><?=htmlspecialchars($p['name'])?></strong></td>
+                                        <td><span class="label label-info" style="font-size:11px; padding:3px 7px;"><?=htmlspecialchars((string)$p['down_mbps'])?> Mbit/s</span></td>
+                                        <td><span class="label label-warning" style="font-size:11px; padding:3px 7px;"><?=htmlspecialchars((string)$p['up_mbps'])?> Mbit/s</span></td>
                                         <td><small class="text-muted"><?=htmlspecialchars($p['descr'])?></small></td>
-                                        <td>
+                                        <td style="text-align:right; white-space:nowrap;">
+                                            <button type="button" class="btn btn-xs btn-primary" onclick='editProfile(<?=json_encode($p, JSON_UNESCAPED_UNICODE)?>)' title="Profili Düzenle">
+                                                <i class="fa fa-pencil"></i> Düzenle
+                                            </button>
                                             <?php if (!in_array($p['id'], ['prof_standard', 'prof_vip'])): ?>
-                                                <button type="submit" onclick="this.form.act.value='del_profile'; this.form.prof_id.value='<?=htmlspecialchars($p['id'])?>';" class="btn btn-xs btn-danger"><i class="fa fa-trash"></i></button>
+                                                <button type="button" onclick="deleteProfile('<?=htmlspecialchars($p['id'], ENT_QUOTES, 'UTF-8')?>', '<?=htmlspecialchars($p['name'], ENT_QUOTES, 'UTF-8')?>')" class="btn btn-xs btn-danger" title="Profili Sil" style="margin-left:4px;">
+                                                    <i class="fa fa-trash"></i>
+                                                </button>
                                             <?php else: ?>
-                                                <span class="text-muted"><i class="fa fa-lock"></i></span>
+                                                <span class="text-muted" title="Sistem Varsayılan Profili (Hızı düzenlenebilir, silinemez)" style="margin-left:6px;"><i class="fa fa-shield"></i></span>
                                             <?php endif; ?>
                                         </td>
                                     </tr>
                                     <?php endforeach; ?>
                                 </tbody>
                             </table>
-                            <input type="hidden" name="prof_id" value="">
                         </div>
                     </div>
                 </div>
@@ -377,6 +430,39 @@ if ($savemsg) {
 </form>
 
 <script>
+
+function openNewProfileForm() {
+    document.getElementById('profFormTitle').innerText = 'Yeni Hız Profili Tanımla';
+    document.getElementById('main_prof_id').value = '';
+    document.getElementById('prof_name_input').value = '';
+    document.getElementById('prof_down_input').value = '10';
+    document.getElementById('prof_up_input').value = '5';
+    document.getElementById('prof_descr_input').value = '';
+    document.getElementById('profSubmitBtn').innerHTML = '<i class="fa fa-check"></i> Profili Kaydet';
+    $('#newProfilePanel').collapse('show');
+    document.getElementById('prof_name_input').focus();
+}
+
+function editProfile(p) {
+    document.getElementById('profFormTitle').innerText = 'Profili Düzenle: ' + p.name;
+    document.getElementById('main_prof_id').value = p.id;
+    document.getElementById('prof_name_input').value = p.name;
+    document.getElementById('prof_down_input').value = p.down_mbps;
+    document.getElementById('prof_up_input').value = p.up_mbps;
+    document.getElementById('prof_descr_input').value = p.descr || '';
+    document.getElementById('profSubmitBtn').innerHTML = '<i class="fa fa-check"></i> Değişiklikleri Güncelle';
+    $('#newProfilePanel').collapse('show');
+    document.getElementById('prof_down_input').focus();
+}
+
+function deleteProfile(id, name) {
+    if (!confirm("'" + name + "' profilini silmek istediğinize emin misiniz?")) return;
+    var f = document.getElementById('mainForm');
+    f.act.value = 'del_profile';
+    f.prof_id.value = id;
+    f.submit();
+}
+
 function killHostState(ip) {
     if (!confirm(ip + ' için aktif oturumları sıfırlamak istediğinize emin misiniz?')) return;
     document.getElementById('killStateIp').value = ip;
