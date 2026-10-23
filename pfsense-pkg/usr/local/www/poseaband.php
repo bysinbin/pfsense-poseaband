@@ -196,7 +196,7 @@ if ($savemsg) {
 <div class="panel panel-default">
     <div class="panel-heading">
         <h2 class="panel-title">
-            <i class="fa-solid fa-gauge-high"></i> PoseaBand &bull; Kurumsal Bant Genişliği &amp; QoS Hız Yöneticisi
+            <i class="fa fa-dashboard"></i> PoseaBand &bull; Kurumsal Bant Genişliği &amp; QoS Hız Yöneticisi
         </h2>
     </div>
     <div class="panel-body">
@@ -208,18 +208,18 @@ if ($savemsg) {
         <form method="post" class="form-horizontal">
             <input type="hidden" name="act" value="save_settings">
 
-            <div class="alert <?=!empty($conf['enabled']) ? 'alert-success' : 'alert-warning'?>" style="display:flex; align-items:center; justify-content:space-between;">
-                <div>
-                    <strong><i class="fa-solid fa-power-off"></i> PoseaBand Çalışma Durumu:</strong>
+            <div class="alert <?=!empty($conf['enabled']) ? 'alert-success' : 'alert-warning'?>" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:12px 18px; border-radius:6px;">
+                <div style="font-size:14px;">
+                    <strong><i class="fa fa-power-off"></i> PoseaBand Çalışma Durumu:</strong>
                     <?php if (!empty($conf['enabled'])): ?>
-                        <span class="badge" style="background-color:#16a34a; font-size:13px; margin-left:8px;">AKTİF (Hız Limitleri Uygulanıyor)</span>
+                        <span class="badge" style="background-color:#16a34a; font-size:13px; margin-left:8px; padding:6px 12px;">AKTİF (Hız Limitleri Uygulanıyor)</span>
                     <?php else: ?>
-                        <span class="badge" style="background-color:#64748b; font-size:13px; margin-left:8px;">PASİF (Limitler Devre Dışı)</span>
+                        <span class="badge" style="background-color:#64748b; font-size:13px; margin-left:8px; padding:6px 12px;">PASİF (Limitler Devre Dışı)</span>
                     <?php endif; ?>
                 </div>
                 <div class="checkbox" style="margin:0;">
-                    <label style="font-weight:bold; cursor:pointer;">
-                        <input type="checkbox" name="enabled" value="1" <?=!empty($conf['enabled']) ? 'checked' : ''?> onchange="this.form.submit();">
+                    <label style="font-weight:700; color:#0f172a; cursor:pointer; font-size:13px;">
+                        <input type="checkbox" name="enabled" value="1" <?=!empty($conf['enabled']) ? 'checked' : ''?> onchange="this.form.submit();" style="transform:scale(1.2); margin-right:8px;">
                         PoseaBand Servisini Etkinleştir
                     </label>
                 </div>
@@ -228,7 +228,7 @@ if ($savemsg) {
             <div class="row" style="margin-top:20px;">
                 <div class="col-md-6">
                     <div class="panel panel-info">
-                        <div class="panel-heading"><strong><i class="fa-solid fa-download"></i> Varsayılan Kişi Başı İnternet Hızı</strong></div>
+                        <div class="panel-heading"><strong><i class="fa fa-download"></i> Varsayılan Kişi Başı İnternet Hızı</strong></div>
                         <div class="panel-body">
                             <div class="form-group">
                                 <label class="col-sm-5 control-label">Varsayılan İndirme (Download):</label>
@@ -265,7 +265,7 @@ if ($savemsg) {
 
                             <div class="form-group">
                                 <div class="col-sm-offset-5 col-sm-7">
-                                    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> Ayarları Kaydet &amp; Uygula</button>
+                                    <button type="submit" class="btn btn-primary"><i class="fa fa-save"></i> Ayarları Kaydet &amp; Uygula</button>
                                 </div>
                             </div>
                         </div>
@@ -275,8 +275,8 @@ if ($savemsg) {
                 <div class="col-md-6">
                     <div class="panel panel-default">
                         <div class="panel-heading" style="display:flex; justify-content:space-between; align-items:center;">
-                            <strong><i class="fa-solid fa-layer-group"></i> Tanımlı Hız Profilleri</strong>
-                            <button type="button" class="btn btn-xs btn-success" data-toggle="collapse" data-target="#newProfilePanel"><i class="fa-solid fa-plus"></i> Yeni Profil Ekle</button>
+                            <strong><i class="fa fa-bars"></i> Tanımlı Hız Profilleri</strong>
+                            <button type="button" class="btn btn-xs btn-success" data-toggle="collapse" data-target="#newProfilePanel"><i class="fa fa-plus"></i> Yeni Profil Ekle</button>
                         </div>
                         <div class="panel-body">
                             <div id="newProfilePanel" class="collapse" style="background:#f8fafc; padding:15px; border-radius:6px; margin-bottom:15px; border:1px solid #e2e8f0;">
@@ -319,9 +319,9 @@ if ($savemsg) {
                                         <td><small class="text-muted"><?=htmlspecialchars($p['descr'])?></small></td>
                                         <td>
                                             <?php if (!in_array($p['id'], ['prof_standard', 'prof_vip'])): ?>
-                                                <button type="submit" onclick="this.form.act.value='del_profile'; this.form.prof_id.value='<?=htmlspecialchars($p['id'])?>';" class="btn btn-xs btn-danger"><i class="fa-solid fa-trash"></i></button>
+                                                <button type="submit" onclick="this.form.act.value='del_profile'; this.form.prof_id.value='<?=htmlspecialchars($p['id'])?>';" class="btn btn-xs btn-danger"><i class="fa fa-trash"></i></button>
                                             <?php else: ?>
-                                                <span class="text-muted"><i class="fa-solid fa-lock"></i></span>
+                                                <span class="text-muted"><i class="fa fa-lock"></i></span>
                                             <?php endif; ?>
                                         </td>
                                     </tr>
@@ -340,10 +340,10 @@ if ($savemsg) {
         <!-- Live Traffic Monitor Card -->
         <div class="panel panel-primary" style="margin-top:20px;">
             <div class="panel-heading" style="display:flex; justify-content:space-between; align-items:center;">
-                <strong><i class="fa-solid fa-chart-line"></i> PoseaBand Canlı Hat &amp; İstemci Hız İzleyici (vtnet1 LAN)</strong>
+                <strong><i class="fa fa-line-chart"></i> PoseaBand Canlı Hat &amp; İstemci Hız İzleyici (vtnet1 LAN)</strong>
                 <div>
                     <span id="pbStatusBadge" class="badge" style="background-color:#1e293b;">Yükleniyor...</span>
-                    <button type="button" class="btn btn-xs btn-default" onclick="refreshBandTraffic();"><i class="fa-solid fa-arrows-rotate"></i> Yenile</button>
+                    <button type="button" class="btn btn-xs btn-default" onclick="refreshBandTraffic();"><i class="fa fa-refresh"></i> Yenile</button>
                 </div>
             </div>
             <div class="panel-body">
@@ -361,7 +361,7 @@ if ($savemsg) {
                         </tr>
                     </thead>
                     <tbody id="pbTrafficTbody">
-                        <tr><td colspan="8" class="text-center text-muted"><i class="fa-solid fa-spinner fa-spin"></i> Canlı ağ verisi çekiliyor...</td></tr>
+                        <tr><td colspan="8" class="text-center text-muted"><i class="fa fa-spinner fa-spin"></i> Canlı ağ verisi çekiliyor...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -407,8 +407,8 @@ function refreshBandTraffic() {
                     '<td>' + c.user + '</td>' +
                     '<td><span class="label label-default">' + (c.dept || 'Genel') + '</span></td>' +
                     '<td><small class="text-muted font-monospace">' + c.mac + '</small></td>' +
-                    '<td style="' + downColor + '"><i class="fa-solid fa-arrow-down"></i> ' + c.down_mbps.toFixed(2) + ' Mbit/s</td>' +
-                    '<td><i class="fa-solid fa-arrow-up text-muted"></i> ' + c.up_mbps.toFixed(2) + ' Mbit/s</td>' +
+                    '<td style="' + downColor + '"><i class="fa fa-arrow-down"></i> ' + c.down_mbps.toFixed(2) + ' Mbit/s</td>' +
+                    '<td><i class="fa fa-arrow-up text-muted"></i> ' + c.up_mbps.toFixed(2) + ' Mbit/s</td>' +
                     '<td><small class="text-muted">' + (c.remote || '-') + '</small></td>' +
                                         '<td>' +
                         '<button type="button" class="btn btn-xs btn-danger" onclick="killHostState(\'' + c.ip + '\')" title="Oturumları Kes"><i class="fa fa-cut"></i> Oturumu Kes</button>' +
