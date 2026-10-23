@@ -25,13 +25,16 @@ if (isset($_GET['ajax_traffic'])) {
         }
     }
     
-    $live_data = [];
-    
-    // Read AD users
+    // Read AD users & sessions
     $ad_users = [];
-    $ad_file = '/var/etc/poseafilter/ad_users.json';
-    if (file_exists($ad_file)) {
-        $ad_users = @json_decode(file_get_contents($ad_file), true) ?: [];
+    if (file_exists('/usr/local/pkg/posea_ad_sso.inc')) {
+        require_once('/usr/local/pkg/posea_ad_sso.inc');
+        if (function_exists('posea_sso_get_sessions')) {
+            $ad_users = posea_sso_get_sessions();
+        }
+    }
+    if (empty($ad_users) && file_exists('/var/etc/poseafilter/ad_users.json')) {
+        $ad_users = @json_decode(file_get_contents('/var/etc/poseafilter/ad_users.json'), true) ?: [];
     }
     
     // Read ARP
@@ -111,16 +114,23 @@ if (isset($_GET['ajax_traffic'])) {
     $result = [];
     foreach ($rates as $ip => $data) {
         $u_name = "Misafir Cihaz / Wi-Fi";
-        $dept = "";
+        $dept = "Misafir";
+        $groups = [];
+        $is_ad_auth = false;
+
         if (isset($ad_users[$ip])) {
             $u = $ad_users[$ip];
-            $u_name = $u['display_name'] ?? ($u['username'] ?? 'Domain User');
-            $dept = $u['department'] ?? '';
+            if (!empty($u['username']) && $u['username'] !== 'anonymous' && ($u['status'] ?? '') === 'authenticated') {
+                $u_name = $u['display_name'] ?? ($u['username'] ?? 'Domain User');
+                $dept = $u['department'] ?? 'Domain Computers';
+                $groups = $u['groups'] ?? [];
+                $is_ad_auth = true;
+            }
         }
         $mac = $arp_map[$ip] ?? '';
 
         // Match applied QoS profile
-        $applied = poseaband_find_client_profile($conf, $ip, $mac, $u_name, $dept);
+        $applied = poseaband_find_client_profile($conf, $ip, $mac, $u_name, $dept, $groups);
 
         $badge = 'label-info';
         if ($applied['down_mbps'] >= 20) $badge = 'label-success';
@@ -131,6 +141,7 @@ if (isset($_GET['ajax_traffic'])) {
             'ip' => $ip,
             'user' => $u_name,
             'dept' => $dept,
+            'is_ad' => $is_ad_auth,
             'mac' => $mac ?: 'Bilinmiyor',
             'down_mbps' => round($data['down'], 2),
             'up_mbps' => round($data['up'], 2),
@@ -148,7 +159,7 @@ if (isset($_GET['ajax_traffic'])) {
     $json_out = json_encode([
         'enabled' => !empty($conf['enabled']),
         'total_clients' => count($result),
-        'clients' => array_slice($result, 0, 20)
+        'clients' => array_slice($result, 0, 25)
     ], JSON_UNESCAPED_UNICODE);
 
     @file_put_contents($cache_file, $json_out);
@@ -159,74 +170,81 @@ if (isset($_GET['ajax_traffic'])) {
 // Handle Form Submissions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['act'] ?? '';
-    
+
     if ($action === 'save_settings') {
-        $conf['enabled'] = isset($_POST['enabled']);
-        $conf['default_download_mbps'] = max(1, (int)($_POST['default_download_mbps'] ?? 5));
-        $conf['default_upload_mbps'] = max(1, (int)($_POST['default_upload_mbps'] ?? 5));
-        $conf['bypass_local_lan'] = isset($_POST['bypass_local_lan']);
-        
+        $conf['enabled'] = !empty($_POST['enabled']);
+        $conf['default_download_mbps'] = max(0.5, floatval($_POST['default_download_mbps'] ?? 5));
+        $conf['default_upload_mbps'] = max(0.5, floatval($_POST['default_upload_mbps'] ?? 5));
+        $conf['bypass_local_lan'] = !empty($_POST['bypass_local_lan']);
+        $conf['auto_guest_limit'] = !empty($_POST['auto_guest_limit']);
+
         poseaband_save_config($conf);
         poseaband_sync_system($conf);
-        $savemsg = "PoseaBand ayarları başarıyla kaydedildi ve sisteme uygulandı.";
+        $savemsg = "PoseaBand yapılandırması başarıyla kaydedildi ve uygulandı.";
 
     } elseif ($action === 'save_profile') {
         $p_id = trim($_POST['prof_id'] ?? '');
-        $p_name = trim($_POST['prof_name'] ?? 'Yeni Profil');
-        $p_down = max(0.5, floatval($_POST['prof_down'] ?? 5));
-        $p_up = max(0.5, floatval($_POST['prof_up'] ?? 5));
+        $p_name = trim($_POST['prof_name'] ?? '');
+        $p_down = max(0.1, floatval($_POST['prof_down'] ?? 5));
+        $p_up = max(0.1, floatval($_POST['prof_up'] ?? 5));
         $p_descr = trim($_POST['prof_descr'] ?? '');
-        
-        $found = false;
-        if (!empty($p_id)) {
-            foreach ($conf['profiles'] as &$p) {
-                if ($p['id'] === $p_id) {
-                    $p['name'] = $p_name;
-                    $p['down_mbps'] = $p_down;
-                    $p['up_mbps'] = $p_up;
-                    $p['descr'] = $p_descr;
-                    $found = true;
-                    break;
+
+        if ($p_name) {
+            $found = false;
+            if ($p_id) {
+                foreach ($conf['profiles'] as &$p) {
+                    if (($p['id'] ?? '') === $p_id) {
+                        $p['name'] = $p_name;
+                        $p['down_mbps'] = $p_down;
+                        $p['up_mbps'] = $p_up;
+                        $p['descr'] = $p_descr;
+                        $found = true;
+                        break;
+                    }
                 }
+                unset($p);
             }
-            unset($p);
+            if (!$found) {
+                $p_id = 'prof_' . substr(md5(uniqid()), 0, 6);
+                $conf['profiles'][] = [
+                    'id' => $p_id,
+                    'name' => $p_name,
+                    'down_mbps' => $p_down,
+                    'up_mbps' => $p_up,
+                    'descr' => $p_descr,
+                    'badge' => 'label-primary'
+                ];
+                $savemsg = "Yeni hız profili ('{$p_name}') başarıyla eklendi.";
+            } else {
+                $savemsg = "Hız profili ('{$p_name}') başarıyla güncellendi.";
+            }
+            poseaband_save_config($conf);
+            poseaband_sync_system($conf);
         }
-        
-        if (!$found) {
-            $p_id = 'prof_' . substr(md5(uniqid()), 0, 6);
-            $conf['profiles'][] = [
-                'id' => $p_id,
-                'name' => $p_name,
-                'down_mbps' => $p_down,
-                'up_mbps' => $p_up,
-                'descr' => $p_descr
-            ];
-            $savemsg = "Yeni hız profili ('{$p_name}') başarıyla eklendi.";
-        } else {
-            $savemsg = "Hız profili ('{$p_name}') başarıyla güncellendi.";
-        }
-        poseaband_save_config($conf);
-        poseaband_sync_system($conf);
 
     } elseif ($action === 'del_profile') {
         $p_id = trim($_POST['prof_id'] ?? '');
-        $conf['profiles'] = array_values(array_filter($conf['profiles'], function($p) use ($p_id) {
-            return $p['id'] !== $p_id;
-        }));
-        poseaband_save_config($conf);
-        poseaband_sync_system($conf);
-        $savemsg = "Profil başarıyla silindi.";
+        if (in_array($p_id, ['prof_vip', 'prof_standard', 'prof_guest'])) {
+            $savemsg = "Varsayılan sistem profilleri silinemez (ancak hızlarını düzenleyebilirsiniz).";
+        } else {
+            $conf['profiles'] = array_values(array_filter($conf['profiles'], function($p) use ($p_id) {
+                return ($p['id'] ?? '') !== $p_id;
+            }));
+            poseaband_save_config($conf);
+            poseaband_sync_system($conf);
+            $savemsg = "Hız profili başarıyla silindi.";
+        }
 
     } elseif ($action === 'save_client_rule') {
         $r_id = trim($_POST['rule_id'] ?? '');
-        $t_type = $_POST['target_type'] ?? 'ip';
+        $t_type = trim($_POST['target_type'] ?? 'ip');
         $t_val = trim($_POST['target_val'] ?? '');
         $prof_id = trim($_POST['target_profile'] ?? 'prof_standard');
         $descr = trim($_POST['rule_descr'] ?? '');
-        
-        if (!empty($t_val)) {
+
+        if ($t_val) {
             $found = false;
-            if (!empty($r_id)) {
+            if ($r_id) {
                 foreach ($conf['client_rules'] as &$r) {
                     if (($r['id'] ?? '') === $r_id) {
                         $r['target_type'] = $t_type;
@@ -276,6 +294,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// Fetch AD & pfSense Aliases Metadata
+$meta = poseaband_get_ad_metadata();
+$meta_aliases = $meta['aliases'] ?? [];
+$meta_groups = $meta['ad_groups'] ?? [];
+$meta_users = $meta['ad_users'] ?? [];
+$meta_clients = $meta['lan_clients'] ?? [];
+
 $pgtitle = array(gettext("Services"), gettext("PoseaBand (Bant Genişliği & QoS)"));
 include("head.inc");
 
@@ -305,8 +330,8 @@ foreach ($conf['profiles'] ?? [] as $p) {
     </div>
     <div class="panel-body">
         <p class="text-muted">
-            PoseaBand, ağdaki tekil kullanıcıların veya misafir cihazların (video izleme, büyük dosya indirme vb.) kurumsal internet hattını kilitlemesini önler. 
-            Her cihaza veya departmana bağımsız dinamik bant genişliği havuzu (Per-Host Limiter) atar.
+            PoseaBand, ağdaki tekil kullanıcıların veya misafir cihazların kurumsal internet hattını kilitlemesini önler. 
+            Active Directory ile tam entegre çalışır; doğrulanmış personele ayrı, misafir ve mobil cihazlara otomatik ayrı hız limitleri tanımlar.
         </p>
 
         <form method="post" id="mainForm" class="form-horizontal">
@@ -341,10 +366,10 @@ foreach ($conf['profiles'] ?? [] as $p) {
                                 <label class="col-sm-5 control-label">Varsayılan İndirme (Download):</label>
                                 <div class="col-sm-7">
                                     <div class="input-group">
-                                        <input type="number" class="form-control" name="default_download_mbps" value="<?=htmlspecialchars((string)($conf['default_download_mbps'] ?? 5))?>" min="1" max="1000" required>
+                                        <input type="number" class="form-control" name="default_download_mbps" value="<?=htmlspecialchars((string)($conf['default_download_mbps'] ?? 5))?>" min="0.5" max="1000" step="0.5" required>
                                         <span class="input-group-addon">Mbit/s</span>
                                     </div>
-                                    <span class="help-block">Özel kural atanmamış her istemciye uygulanacak standart maksimum indirme hızı.</span>
+                                    <span class="help-block">Özel kural atanmamış AD domain kullanıcılarına uygulanacak standart maksimum indirme hızı.</span>
                                 </div>
                             </div>
 
@@ -352,10 +377,10 @@ foreach ($conf['profiles'] ?? [] as $p) {
                                 <label class="col-sm-5 control-label">Varsayılan Yükleme (Upload):</label>
                                 <div class="col-sm-7">
                                     <div class="input-group">
-                                        <input type="number" class="form-control" name="default_upload_mbps" value="<?=htmlspecialchars((string)($conf['default_upload_mbps'] ?? 5))?>" min="1" max="1000" required>
+                                        <input type="number" class="form-control" name="default_upload_mbps" value="<?=htmlspecialchars((string)($conf['default_upload_mbps'] ?? 5))?>" min="0.5" max="1000" step="0.5" required>
                                         <span class="input-group-addon">Mbit/s</span>
                                     </div>
-                                    <span class="help-block">Özel kural atanmamış her istemciye uygulanacak standart maksimum yükleme hızı.</span>
+                                    <span class="help-block">Özel kural atanmamış AD domain kullanıcılarına uygulanacak standart maksimum yükleme hızı.</span>
                                 </div>
                             </div>
 
@@ -364,7 +389,13 @@ foreach ($conf['profiles'] ?? [] as $p) {
                                     <div class="checkbox">
                                         <label>
                                             <input type="checkbox" name="bypass_local_lan" value="1" <?=!empty($conf['bypass_local_lan']) ? 'checked' : ''?>>
-                                            <strong>Yerel Ağ (LAN-LAN) İstisnası:</strong> Şirket içi sunucular ve dosya paylaşımları sınırsız (1 Gbps) çalışsın.
+                                            <strong>Yerel Ağ (LAN-LAN) İstisnası:</strong> Şirket içi sunucular, dosya paylaşımı ve yazıcılar sınırsız (1 Gbps) çalışsın.
+                                        </label>
+                                    </div>
+                                    <div class="checkbox" style="margin-top:8px;">
+                                        <label>
+                                            <input type="checkbox" name="auto_guest_limit" value="1" <?=!empty($conf['auto_guest_limit'] ?? true) ? 'checked' : ''?>>
+                                            <strong>Akıllı AD &amp; Misafir Ayrımı:</strong> Active Directory'de doğrulanmamış misafir ve mobil cihazlara otomatik olarak <strong>Misafir &amp; Wi-Fi Profili (2M/1M)</strong> uygulansın.
                                         </label>
                                     </div>
                                 </div>
@@ -372,7 +403,7 @@ foreach ($conf['profiles'] ?? [] as $p) {
 
                             <div class="form-group">
                                 <div class="col-sm-offset-5 col-sm-7">
-                                    <button type="submit" class="btn btn-primary"><i class="fa fa-save"></i> Varsayılan Hızları Kaydet &amp; Uygula</button>
+                                    <button type="submit" class="btn btn-primary"><i class="fa fa-save"></i> Yapılandırmayı Kaydet &amp; Uygula</button>
                                 </div>
                             </div>
                         </div>
@@ -380,88 +411,88 @@ foreach ($conf['profiles'] ?? [] as $p) {
                 </div>
 
                 <div class="col-md-6">
-                    <div class="panel panel-default">
+                    <div class="panel panel-success">
                         <div class="panel-heading" style="display:flex; justify-content:space-between; align-items:center;">
-                            <strong><i class="fa fa-bars"></i> Tanımlı Hız Profilleri</strong>
-                            <button type="button" class="btn btn-xs btn-success" onclick="openNewProfileForm();"><i class="fa fa-plus"></i> Yeni Profil Ekle</button>
+                            <strong><i class="fa fa-sliders"></i> Tanımlı Hız Profilleri</strong>
+                            <button type="button" class="btn btn-xs btn-default" onclick="openNewProfileForm();"><i class="fa fa-plus"></i> Yeni Profil Ekle</button>
                         </div>
                         <div class="panel-body">
-                            <!-- Clean Dark-Themed Add / Edit Profile Panel -->
-                            <div id="newProfilePanel" class="collapse" style="background:#1e293b; color:#f1f5f9; padding:18px; border-radius:8px; margin-bottom:18px; border:1px solid #3b82f6; box-shadow:0 4px 6px -1px rgba(0,0,0,0.3);">
+                            <!-- Dark Add/Edit Profile Collapse Panel -->
+                            <div id="newProfilePanel" class="collapse" style="background:#1e293b; color:#f1f5f9; padding:18px; border-radius:8px; margin-bottom:15px; border:1px solid #3b82f6; box-shadow:0 4px 6px -1px rgba(0,0,0,0.3);">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid #334155; padding-bottom:8px;">
-                                    <h4 style="color:#60a5fa; margin:0; font-weight:700;">
-                                        <i class="fa fa-sliders"></i> <span id="profFormTitle">Yeni Hız Profili Tanımla</span>
-                                    </h4>
+                                    <h4 style="color:#60a5fa; margin:0; font-weight:700;"><i class="fa fa-tachometer"></i> <span id="profFormTitle">Yeni Hız Profili Tanımla</span></h4>
                                     <button type="button" class="btn btn-xs btn-default" onclick="$('#newProfilePanel').collapse('hide');" style="color:#94a3b8;"><i class="fa fa-times"></i> Kapat</button>
                                 </div>
-
+                                
                                 <div class="form-group" style="margin-bottom:12px;">
-                                    <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600; text-align:right; padding-top:7px;">Profil Adı:</label>
+                                    <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600;">Profil Adı:</label>
                                     <div class="col-sm-8">
-                                        <input type="text" name="prof_name" id="prof_name_input" class="form-control" placeholder="Örn: Muhasebe / VIP" style="background:#0f172a; color:#fff; border:1px solid #475569;">
+                                        <input type="text" name="prof_name" id="prof_name_input" class="form-control" placeholder="Örn: Muhasebe &amp; Finans" style="background:#0f172a; color:#fff; border:1px solid #475569;">
                                     </div>
                                 </div>
 
                                 <div class="form-group" style="margin-bottom:12px;">
-                                    <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600; text-align:right; padding-top:7px;">Download (İndirme):</label>
+                                    <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600;">İndirme (Download):</label>
                                     <div class="col-sm-8">
                                         <div class="input-group">
-                                            <input type="number" step="0.5" min="0.5" max="1000" name="prof_down" id="prof_down_input" class="form-control" placeholder="Mbit/s" value="10" style="background:#0f172a; color:#fff; border:1px solid #475569;">
-                                            <span class="input-group-addon" style="background:#334155; color:#93c5fd; border:1px solid #475569; font-weight:bold;">Mbit/s</span>
+                                            <input type="number" name="prof_down" id="prof_down_input" class="form-control" value="10" min="0.1" max="1000" step="0.5" style="background:#0f172a; color:#fff; border:1px solid #475569;">
+                                            <span class="input-group-addon" style="background:#334155; color:#cbd5e1; border:1px solid #475569;">Mbit/s</span>
                                         </div>
                                     </div>
                                 </div>
 
                                 <div class="form-group" style="margin-bottom:12px;">
-                                    <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600; text-align:right; padding-top:7px;">Upload (Yükleme):</label>
+                                    <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600;">Yükleme (Upload):</label>
                                     <div class="col-sm-8">
                                         <div class="input-group">
-                                            <input type="number" step="0.5" min="0.5" max="1000" name="prof_up" id="prof_up_input" class="form-control" placeholder="Mbit/s" value="5" style="background:#0f172a; color:#fff; border:1px solid #475569;">
-                                            <span class="input-group-addon" style="background:#334155; color:#fde68a; border:1px solid #475569; font-weight:bold;">Mbit/s</span>
+                                            <input type="number" name="prof_up" id="prof_up_input" class="form-control" value="5" min="0.1" max="1000" step="0.5" style="background:#0f172a; color:#fff; border:1px solid #475569;">
+                                            <span class="input-group-addon" style="background:#334155; color:#cbd5e1; border:1px solid #475569;">Mbit/s</span>
                                         </div>
                                     </div>
                                 </div>
 
-                                <div class="form-group" style="margin-bottom:14px;">
-                                    <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600; text-align:right; padding-top:7px;">Açıklama:</label>
+                                <div class="form-group" style="margin-bottom:12px;">
+                                    <label class="col-sm-4 control-label" style="color:#cbd5e1; font-weight:600;">Açıklama:</label>
                                     <div class="col-sm-8">
-                                        <input type="text" name="prof_descr" id="prof_descr_input" class="form-control" placeholder="Profil açıklaması veya departman detayı" style="background:#0f172a; color:#fff; border:1px solid #475569;">
+                                        <input type="text" name="prof_descr" id="prof_descr_input" class="form-control" placeholder="Bu profilin kullanım amacı" style="background:#0f172a; color:#fff; border:1px solid #475569;">
                                     </div>
                                 </div>
 
-                                <div class="text-right" style="border-top:1px solid #334155; padding-top:10px;">
-                                    <button type="button" class="btn btn-default btn-sm" onclick="$('#newProfilePanel').collapse('hide');" style="margin-right:6px;"><i class="fa fa-times"></i> Vazgeç</button>
-                                    <button type="submit" onclick="this.form.act.value='save_profile';" id="profSubmitBtn" class="btn btn-success btn-sm"><i class="fa fa-check"></i> Profili Kaydet</button>
+                                <div class="form-group" style="margin-bottom:0;">
+                                    <div class="col-sm-offset-4 col-sm-8 text-right">
+                                        <button type="button" class="btn btn-default btn-sm" onclick="$('#newProfilePanel').collapse('hide');" style="margin-right:6px;"><i class="fa fa-times"></i> Vazgeç</button>
+                                        <button type="submit" onclick="this.form.act.value='save_profile';" id="profSubmitBtn" class="btn btn-primary btn-sm"><i class="fa fa-check"></i> Profili Kaydet</button>
+                                    </div>
                                 </div>
                             </div>
 
-                            <table class="table table-hover table-striped table-condensed">
+                            <table class="table table-hover table-striped">
                                 <thead>
-                                    <tr style="background:#090d16; color:#f8fafc;">
+                                    <tr style="background:#0f172a; color:#fff;">
                                         <th>Profil Adı</th>
-                                        <th>İndirme</th>
-                                        <th>Yükleme</th>
+                                        <th>İndirme (Down)</th>
+                                        <th>Yükleme (Up)</th>
                                         <th>Açıklama</th>
-                                        <th style="text-align:right; width:130px;">İşlemler</th>
+                                        <th style="text-align:right; width:110px;">İşlemler</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <?php foreach ($conf['profiles'] as $p): ?>
+                                    <?php foreach ($conf['profiles'] as $p): 
+                                        $is_sys = in_array($p['id'], ['prof_vip', 'prof_standard', 'prof_guest']);
+                                    ?>
                                     <tr>
-                                        <td><strong style="color:#f8fafc; font-size:13px;"><?=htmlspecialchars($p['name'])?></strong></td>
-                                        <td><span class="label label-info" style="font-size:11px; padding:3px 7px;"><?=htmlspecialchars((string)$p['down_mbps'])?> Mbit/s</span></td>
-                                        <td><span class="label label-warning" style="font-size:11px; padding:3px 7px;"><?=htmlspecialchars((string)$p['up_mbps'])?> Mbit/s</span></td>
+                                        <td><strong><?=htmlspecialchars($p['name'])?></strong></td>
+                                        <td><span class="label label-info" style="font-size:11px;"><?=htmlspecialchars((string)$p['down_mbps'])?> Mbit/s</span></td>
+                                        <td><span class="label label-warning" style="font-size:11px;"><?=htmlspecialchars((string)$p['up_mbps'])?> Mbit/s</span></td>
                                         <td><small class="text-muted"><?=htmlspecialchars($p['descr'])?></small></td>
                                         <td style="text-align:right; white-space:nowrap;">
-                                            <button type="button" class="btn btn-xs btn-primary" onclick='editProfile(<?=json_encode($p, JSON_UNESCAPED_UNICODE)?>)' title="Profili Düzenle">
+                                            <button type="button" class="btn btn-xs btn-primary" onclick='editProfile(<?=json_encode($p, JSON_UNESCAPED_UNICODE)?>)' title="Profili ve Hızları Düzenle">
                                                 <i class="fa fa-pencil"></i> Düzenle
                                             </button>
-                                            <?php if (!in_array($p['id'], ['prof_standard', 'prof_vip'])): ?>
+                                            <?php if (!$is_sys): ?>
                                                 <button type="button" onclick="deleteProfile('<?=htmlspecialchars($p['id'], ENT_QUOTES, 'UTF-8')?>', '<?=htmlspecialchars($p['name'], ENT_QUOTES, 'UTF-8')?>')" class="btn btn-xs btn-danger" title="Profili Sil" style="margin-left:4px;">
                                                     <i class="fa fa-trash"></i>
                                                 </button>
-                                            <?php else: ?>
-                                                <span class="text-muted" title="Sistem Varsayılan Profili (Hızı düzenlenebilir, silinemez)" style="margin-left:6px;"><i class="fa fa-shield"></i></span>
                                             <?php endif; ?>
                                         </td>
                                     </tr>
@@ -473,17 +504,15 @@ foreach ($conf['profiles'] ?? [] as $p) {
                 </div>
             </div>
 
-            <hr style="margin:25px 0; border-color:#334155;">
-
-            <!-- ROW 2: Specific Client & Group QoS Rules -->
-            <div class="panel panel-default">
+            <!-- ROW 2: Client & Group QoS Rules -->
+            <div class="panel panel-warning" style="margin-top:20px;">
                 <div class="panel-heading" style="display:flex; justify-content:space-between; align-items:center;">
                     <strong style="font-size:14px;"><i class="fa fa-users"></i> İstemci &amp; Grup Özel Hız Atamaları (QoS Kuralları)</strong>
                     <button type="button" class="btn btn-xs btn-success" onclick="openNewRuleForm();"><i class="fa fa-plus"></i> Yeni İstemci / Grup Kuralı Ata</button>
                 </div>
                 <div class="panel-body">
                     <p class="text-muted">
-                        Belirli cihazlara (IP, MAC adresi), IP bloklarına (Subnet) veya Active Directory kullanıcı/departmanlarına özel hız profili atayabilirsiniz. 
+                        pfSense Alias'larına, Active Directory kullanıcı veya gruplarına, tekil IP veya MAC adreslerine özel hız profili atayabilirsiniz. 
                         Burada tanımlanan kurallar genel varsayılan hızın önüne geçer.
                     </p>
 
@@ -500,33 +529,102 @@ foreach ($conf['profiles'] ?? [] as $p) {
                             <div class="col-md-3">
                                 <div class="form-group" style="margin-bottom:12px;">
                                     <label class="control-label" style="color:#cbd5e1; font-weight:600;">Hedef Tipi:</label>
-                                    <select name="target_type" id="rule_target_type" class="form-control" style="background:#0f172a; color:#fff; border:1px solid #475569;" onchange="updateTargetPlaceholder();">
-                                        <option value="ip">Tekil IP Adresi</option>
-                                        <option value="mac">Cihaz MAC Adresi</option>
-                                        <option value="subnet">IP Alt Ağı (Subnet / CIDR)</option>
-                                        <option value="user">Active Directory Kullanıcısı</option>
-                                        <option value="group">Departman / AD Grubu</option>
+                                    <select name="target_type" id="rule_target_type" class="form-control" style="background:#0f172a; color:#fff; border:1px solid #475569;" onchange="onTargetTypeChange();">
+                                        <option value="alias">📋 pfSense Alias (IP / Host / Ağ Listesi)</option>
+                                        <option value="group">👥 Active Directory Grubu / Departman</option>
+                                        <option value="user">👤 Active Directory Kullanıcısı / Bilgisayar</option>
+                                        <option value="ip" selected>💻 Tekil İstemci IP Adresi</option>
+                                        <option value="mac">🏷️ Cihaz MAC Adresi</option>
+                                        <option value="subnet">🌐 IP Alt Ağı (Subnet / CIDR)</option>
                                     </select>
                                 </div>
                             </div>
-                            <div class="col-md-3">
+
+                            <div class="col-md-4">
                                 <div class="form-group" style="margin-bottom:12px;">
-                                    <label class="control-label" style="color:#cbd5e1; font-weight:600;">Hedef Değer:</label>
-                                    <input type="text" name="target_val" id="rule_target_val" class="form-control" placeholder="Örn: 192.168.2.226" style="background:#0f172a; color:#fff; border:1px solid #475569;" required>
+                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                                        <label class="control-label" style="color:#cbd5e1; font-weight:600; margin:0;">Hedef Değer:</label>
+                                        <a href="javascript:void(0)" onclick="toggleManualTargetInput();" style="color:#38bdf8; font-size:11px; text-decoration:none;"><i class="fa fa-keyboard-o"></i> <span id="manualToggleLabel">Elle Yaz</span></a>
+                                    </div>
+
+                                    <!-- Alias Select -->
+                                    <div id="wrap_alias" class="target-field-wrap" style="display:none;">
+                                        <select id="sel_alias" class="form-control" style="background:#0f172a; color:#fff; border:1px solid #475569;" onchange="syncTargetVal(this.value)">
+                                            <option value="">-- pfSense Alias Seçiniz (<?=count($meta_aliases)?> Alias) --</option>
+                                            <?php foreach ($meta_aliases as $als): ?>
+                                                <option value="<?=htmlspecialchars($als['name'])?>"><?=htmlspecialchars($als['name'])?> (<?=htmlspecialchars($als['type'])?>: <?=htmlspecialchars(mb_substr($als['address'], 0, 30))?>)</option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+
+                                    <!-- AD Group Select -->
+                                    <div id="wrap_group" class="target-field-wrap" style="display:none;">
+                                        <select id="sel_group" class="form-control" style="background:#0f172a; color:#fff; border:1px solid #475569;" onchange="syncTargetVal(this.value)">
+                                            <option value="">-- AD Grubu / Departman Seçiniz (<?=count($meta_groups)?> Grup) --</option>
+                                            <?php foreach ($meta_groups as $grp): ?>
+                                                <option value="<?=htmlspecialchars($grp)?>"><?=htmlspecialchars($grp)?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+
+                                    <!-- AD User Select -->
+                                    <div id="wrap_user" class="target-field-wrap" style="display:none;">
+                                        <select id="sel_user" class="form-control" style="background:#0f172a; color:#fff; border:1px solid #475569;" onchange="syncTargetVal(this.value)">
+                                            <option value="">-- AD Kullanıcısı / PC Seçiniz (<?=count($meta_users)?> Kullanıcı) --</option>
+                                            <?php foreach ($meta_users as $usr): ?>
+                                                <option value="<?=htmlspecialchars($usr['username'])?>"><?=htmlspecialchars($usr['username'])?> <?=!empty($usr['display_name']) && $usr['display_name'] !== $usr['username'] ? '('.htmlspecialchars($usr['display_name']).')' : ''?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+
+                                    <!-- IP Input with LAN Clients Datalist -->
+                                    <div id="wrap_ip" class="target-field-wrap">
+                                        <input type="text" id="sel_ip" class="form-control" list="dl_lan_ips" placeholder="Örn: 192.168.2.226" style="background:#0f172a; color:#fff; border:1px solid #475569;" oninput="syncTargetVal(this.value)">
+                                        <datalist id="dl_lan_ips">
+                                            <?php foreach ($meta_clients as $cli): ?>
+                                                <option value="<?=htmlspecialchars($cli['ip'])?>"><?=htmlspecialchars($cli['name'])?> (<?=htmlspecialchars($cli['mac'])?>)</option>
+                                            <?php endforeach; ?>
+                                        </datalist>
+                                    </div>
+
+                                    <!-- MAC Input with LAN MACs Datalist -->
+                                    <div id="wrap_mac" class="target-field-wrap" style="display:none;">
+                                        <input type="text" id="sel_mac" class="form-control" list="dl_lan_macs" placeholder="Örn: a6:73:5a:e1:34:c1" style="background:#0f172a; color:#fff; border:1px solid #475569;" oninput="syncTargetVal(this.value)">
+                                        <datalist id="dl_lan_macs">
+                                            <?php foreach ($meta_clients as $cli): ?>
+                                                <option value="<?=htmlspecialchars($cli['mac'])?>"><?=htmlspecialchars($cli['ip'])?> - <?=htmlspecialchars($cli['name'])?></option>
+                                            <?php endforeach; ?>
+                                        </datalist>
+                                    </div>
+
+                                    <!-- Subnet Input -->
+                                    <div id="wrap_subnet" class="target-field-wrap" style="display:none;">
+                                        <input type="text" id="sel_subnet" class="form-control" placeholder="Örn: 192.168.2.0/24" style="background:#0f172a; color:#fff; border:1px solid #475569;" oninput="syncTargetVal(this.value)">
+                                    </div>
+
+                                    <!-- Fallback Manual Input -->
+                                    <div id="wrap_manual" class="target-field-wrap" style="display:none;">
+                                        <input type="text" id="sel_manual" class="form-control" placeholder="Özel Değer Yazınız..." style="background:#0f172a; color:#fff; border:1px solid #475569;" oninput="syncTargetVal(this.value)">
+                                    </div>
+
+                                    <!-- Real Value Field for POST -->
+                                    <input type="hidden" name="target_val" id="rule_target_val" required>
                                 </div>
                             </div>
-                            <div class="col-md-3">
+
+                            <div class="col-md-2">
                                 <div class="form-group" style="margin-bottom:12px;">
-                                    <label class="control-label" style="color:#cbd5e1; font-weight:600;">Uygulanacak Hız Profili:</label>
+                                    <label class="control-label" style="color:#cbd5e1; font-weight:600;">Uygulanacak Profil:</label>
                                     <select name="target_profile" id="rule_target_profile" class="form-control" style="background:#0f172a; color:#fff; border:1px solid #475569;">
                                         <?php foreach ($conf['profiles'] as $p): ?>
                                             <option value="<?=htmlspecialchars($p['id'])?>">
-                                                <?=htmlspecialchars($p['name'])?> (<?=htmlspecialchars((string)$p['down_mbps'])?>M Down / <?=htmlspecialchars((string)$p['up_mbps'])?>M Up)
+                                                <?=htmlspecialchars($p['name'])?> (<?=htmlspecialchars((string)$p['down_mbps'])?>M / <?=htmlspecialchars((string)$p['up_mbps'])?>M)
                                             </option>
                                         <?php endforeach; ?>
                                     </select>
                                 </div>
                             </div>
+
                             <div class="col-md-3">
                                 <div class="form-group" style="margin-bottom:12px;">
                                     <label class="control-label" style="color:#cbd5e1; font-weight:600;">Açıklama / Not:</label>
@@ -557,7 +655,7 @@ foreach ($conf['profiles'] ?? [] as $p) {
                             <?php if (empty($conf['client_rules'])): ?>
                                 <tr>
                                     <td colspan="6" class="text-center text-muted" style="padding:20px;">
-                                        <i class="fa fa-info-circle"></i> Henüz özel bir istemci veya departman kuralı tanımlanmadı. Tüm ağ varsayılan hız limiti ile çalışıyor.
+                                        <i class="fa fa-info-circle"></i> Henüz özel bir kural tanımlanmadı. Ağınız "Varsayılan Hız" ve "Akıllı AD/Misafir Ayrımı" kuralları ile otomatik yönetiliyor.
                                     </td>
                                 </tr>
                             <?php else: ?>
@@ -567,11 +665,12 @@ foreach ($conf['profiles'] ?? [] as $p) {
                                     $p_down = $prof['down_mbps'] ?? 5;
                                     $p_up = $prof['up_mbps'] ?? 5;
                                     $type_labels = [
-                                        'ip' => '<span class="label label-default">IP Adresi</span>',
-                                        'mac' => '<span class="label label-primary">MAC Adresi</span>',
-                                        'subnet' => '<span class="label label-info">Subnet</span>',
-                                        'user' => '<span class="label label-warning">AD Kullanıcısı</span>',
-                                        'group' => '<span class="label label-success">Departman/Grup</span>'
+                                        'alias' => '<span class="label label-primary"><i class="fa fa-list"></i> pfSense Alias</span>',
+                                        'group' => '<span class="label label-success"><i class="fa fa-users"></i> AD Grubu</span>',
+                                        'user' => '<span class="label label-warning"><i class="fa fa-user"></i> AD Kullanıcı</span>',
+                                        'ip' => '<span class="label label-default"><i class="fa fa-desktop"></i> IP Adresi</span>',
+                                        'mac' => '<span class="label label-info"><i class="fa fa-barcode"></i> MAC Adresi</span>',
+                                        'subnet' => '<span class="label label-info"><i class="fa fa-sitemap"></i> Subnet</span>'
                                     ];
                                 ?>
                                 <tr>
@@ -617,7 +716,7 @@ foreach ($conf['profiles'] ?? [] as $p) {
                         <tr style="background:#0f172a; color:#fff;">
                             <th>İstemci IP Adresi</th>
                             <th>Active Directory / Cihaz Adı</th>
-                            <th>Departman</th>
+                            <th>Departman / Durum</th>
                             <th>MAC Adresi</th>
                             <th>Anlık İndirme (Download)</th>
                             <th>Anlık Yükleme (Upload)</th>
@@ -675,15 +774,50 @@ function deleteProfile(id, name) {
     f.submit();
 }
 
-// Client Rule Management JS
-function updateTargetPlaceholder() {
+// Client Rule Target Type & Field Dynamic Switcher
+var isManualMode = false;
+function syncTargetVal(val) {
+    document.getElementById('rule_target_val').value = val.trim();
+}
+
+function onTargetTypeChange() {
     var type = document.getElementById('rule_target_type').value;
-    var inp = document.getElementById('rule_target_val');
-    if (type === 'ip') inp.placeholder = 'Örn: 192.168.2.226';
-    else if (type === 'mac') inp.placeholder = 'Örn: a6:73:5a:e1:34:c1';
-    else if (type === 'subnet') inp.placeholder = 'Örn: 192.168.4.0/24';
-    else if (type === 'user') inp.placeholder = 'Örn: kadir.yildiz veya muhasebe1';
-    else if (type === 'group') inp.placeholder = 'Örn: Muhasebe veya IT';
+    isManualMode = false;
+    document.getElementById('manualToggleLabel').innerText = 'Elle Yaz';
+
+    var wraps = document.querySelectorAll('.target-field-wrap');
+    for (var i = 0; i < wraps.length; i++) {
+        wraps[i].style.display = 'none';
+    }
+
+    var targetWrap = document.getElementById('wrap_' + type);
+    if (targetWrap) {
+        targetWrap.style.display = 'block';
+        var inputElem = targetWrap.querySelector('input, select');
+        if (inputElem) {
+            syncTargetVal(inputElem.value);
+            inputElem.focus();
+        }
+    }
+}
+
+function toggleManualTargetInput() {
+    isManualMode = !isManualMode;
+    var wraps = document.querySelectorAll('.target-field-wrap');
+    for (var i = 0; i < wraps.length; i++) {
+        wraps[i].style.display = 'none';
+    }
+
+    if (isManualMode) {
+        document.getElementById('manualToggleLabel').innerText = 'Listeden Seç';
+        document.getElementById('wrap_manual').style.display = 'block';
+        var m = document.getElementById('sel_manual');
+        m.value = document.getElementById('rule_target_val').value;
+        m.focus();
+    } else {
+        document.getElementById('manualToggleLabel').innerText = 'Elle Yaz';
+        onTargetTypeChange();
+    }
 }
 
 function openNewRuleForm() {
@@ -694,9 +828,8 @@ function openNewRuleForm() {
     document.getElementById('rule_target_profile').selectedIndex = 0;
     document.getElementById('rule_descr').value = '';
     document.getElementById('ruleSubmitBtn').innerHTML = '<i class="fa fa-check"></i> Kuralı Kaydet &amp; Uygula';
-    updateTargetPlaceholder();
+    onTargetTypeChange();
     $('#newRulePanel').collapse('show');
-    document.getElementById('rule_target_val').focus();
 }
 
 function editClientRule(r) {
@@ -707,9 +840,24 @@ function editClientRule(r) {
     document.getElementById('rule_target_profile').value = r.profile_id;
     document.getElementById('rule_descr').value = r.descr || '';
     document.getElementById('ruleSubmitBtn').innerHTML = '<i class="fa fa-check"></i> Değişiklikleri Güncelle';
-    updateTargetPlaceholder();
+    
+    onTargetTypeChange();
+
+    // Populate the field corresponding to target_type
+    var wrap = document.getElementById('wrap_' + r.target_type);
+    if (wrap) {
+        var input = wrap.querySelector('input, select');
+        if (input) {
+            input.value = r.target_val;
+            // If select couldn't select value, switch to manual
+            if (input.tagName === 'SELECT' && input.value !== r.target_val) {
+                toggleManualTargetInput();
+                document.getElementById('sel_manual').value = r.target_val;
+            }
+        }
+    }
+
     $('#newRulePanel').collapse('show');
-    document.getElementById('rule_target_val').focus();
 }
 
 function deleteClientRule(id, target) {
@@ -724,12 +872,14 @@ function deleteClientRule(id, target) {
 function quickAssignProfile(ip, mac, user, currentProfId) {
     openNewRuleForm();
     document.getElementById('rule_target_type').value = 'ip';
-    document.getElementById('rule_target_val').value = ip;
+    onTargetTypeChange();
+    document.getElementById('sel_ip').value = ip;
+    syncTargetVal(ip);
     if (currentProfId && document.getElementById('rule_target_profile')) {
         document.getElementById('rule_target_profile').value = currentProfId;
     }
     document.getElementById('rule_descr').value = (user ? user + ' için ' : '') + 'Özel Hız Limiti';
-    document.getElementById('rule_descr').focus();
+    document.getElementById('rule_target_profile').focus();
 }
 
 // Kill State Function
@@ -768,13 +918,19 @@ function refreshBandTraffic() {
                 var ruleTag = '';
                 if (c.applied_by_rule) {
                     ruleTag = '<br><small class="text-muted"><i class="fa fa-tag text-success"></i> ' + (c.rule_descr || 'Özel Kural') + '</small>';
+                } else if (c.profile_id === 'prof_guest') {
+                    ruleTag = '<br><small class="text-warning"><i class="fa fa-magic"></i> ' + (c.rule_descr || 'Otomatik Misafir Limiti') + '</small>';
                 } else {
-                    ruleTag = '<br><small class="text-muted"><i class="fa fa-sliders text-info"></i> Genel Kural</small>';
+                    ruleTag = '<br><small class="text-info"><i class="fa fa-id-badge"></i> ' + (c.rule_descr || 'AD Doğrulanmış Cihaz') + '</small>';
                 }
+
+                var deptBadge = c.is_ad 
+                    ? '<span class="label label-primary"><i class="fa fa-building-o"></i> ' + (c.dept || 'Domain Computers') + '</span>'
+                    : '<span class="label label-default"><i class="fa fa-wifi"></i> Misafir</span>';
 
                 tr.innerHTML = '<td><strong>' + c.ip + '</strong></td>' +
                     '<td><strong>' + c.user + '</strong></td>' +
-                    '<td><span class="label label-default">' + (c.dept || 'Genel') + '</span></td>' +
+                    '<td>' + deptBadge + '</td>' +
                     '<td><small class="text-muted font-monospace">' + c.mac + '</small></td>' +
                     '<td style="' + downColor + '"><i class="fa fa-arrow-down"></i> ' + c.down_mbps.toFixed(2) + ' Mbit/s</td>' +
                     '<td><i class="fa fa-arrow-up text-muted"></i> ' + c.up_mbps.toFixed(2) + ' Mbit/s</td>' +
