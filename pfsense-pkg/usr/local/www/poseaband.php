@@ -88,22 +88,35 @@ if (isset($_GET['ajax_traffic'])) {
                     $down = 0.0;
                     $up = 0.0;
                     
-                    if (poseaband_is_local_ip($host_b)) {
-                        // host_a is remote, host_b is LAN client.
-                        // host_a => host_b is traffic from remote to LAN = DOWNLOAD!
-                        // host_b <= host_a is traffic from LAN to remote = UPLOAD!
+                    $is_a_local = poseaband_is_local_ip($host_a);
+                    $is_b_local = poseaband_is_local_ip($host_b);
+                    
+                    // If both are local internal IPs and LAN bypass is active, skip from internet monitor
+                    if ($is_a_local && $is_b_local && !empty($conf['bypass_local_lan'])) {
+                        continue;
+                    }
+                    
+                    if ($is_b_local && !$is_a_local) {
+                        // host_a is WAN remote, host_b is LAN client.
+                        // host_a => host_b is traffic from WAN to LAN = DOWNLOAD!
+                        // host_b <= host_a is traffic from LAN to WAN = UPLOAD!
                         $lan_ip = $host_b;
                         $remote = $host_a;
                         $down = pb_parse_rate($m1[2]);
                         $up = pb_parse_rate($m2[2]);
-                    } elseif (poseaband_is_local_ip($host_a)) {
-                        // host_a is LAN client, host_b is remote.
-                        // host_a => host_b is traffic from LAN to remote = UPLOAD!
-                        // host_b <= host_a is traffic from remote to LAN = DOWNLOAD!
+                    } elseif ($is_a_local && !$is_b_local) {
+                        // host_a is LAN client, host_b is WAN remote.
+                        // host_a => host_b is traffic from LAN to WAN = UPLOAD!
+                        // host_b <= host_a is traffic from WAN to LAN = DOWNLOAD!
                         $lan_ip = $host_a;
                         $remote = $host_b;
                         $up = pb_parse_rate($m1[2]);
                         $down = pb_parse_rate($m2[2]);
+                    } elseif ($is_b_local) {
+                        $lan_ip = $host_b;
+                        $remote = $host_a;
+                        $down = pb_parse_rate($m1[2]);
+                        $up = pb_parse_rate($m2[2]);
                     }
                     
                     if ($lan_ip) {
