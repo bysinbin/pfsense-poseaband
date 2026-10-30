@@ -88,6 +88,54 @@ function poseaband_save_config($conf) {
     @file_put_contents(POSEABAND_CONF_BACKUP, $json);
 }
 
+function poseaband_is_local_ip($ip) {
+    if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+        return false;
+    }
+    $long = ip2long($ip);
+    if ($long === false) return false;
+    // 10.0.0.0/8
+    if (($long & 0xFF000000) === 0x0A000000) return true;
+    // 172.16.0.0/12
+    if (($long & 0xFFF00000) === 0xAC100000) return true;
+    // 192.168.0.0/16
+    if (($long & 0xFFFF0000) === 0xC0A80000) return true;
+    return false;
+}
+
+function poseaband_kill_client_states($ip) {
+    $ip = trim((string)$ip);
+    if (!filter_var($ip, FILTER_VALIDATE_IP)) {
+        return false;
+    }
+    if (function_exists('pfSense_kill_states')) {
+        @pfSense_kill_states($ip . "/32");
+        @pfSense_kill_states("0.0.0.0/0", $ip . "/32");
+    }
+    $esc = escapeshellarg($ip);
+    @shell_exec("/sbin/pfctl -k {$esc} 2>/dev/null");
+    @shell_exec("/sbin/pfctl -k 0.0.0.0/0 -k {$esc} 2>/dev/null");
+    return true;
+}
+
+function poseaband_kill_all_client_states($ips = []) {
+    if (empty($ips)) {
+        $conf = poseaband_get_config();
+        foreach ($conf['client_rules'] ?? [] as $cr) {
+            if (($cr['target_type'] ?? '') === 'ip' && !empty($cr['target_val'])) {
+                $ips[] = $cr['target_val'];
+            }
+        }
+    }
+    $killed = 0;
+    foreach (array_unique($ips) as $ip) {
+        if (poseaband_kill_client_states($ip)) {
+            $killed++;
+        }
+    }
+    return $killed;
+}
+
 function poseaband_cidr_match($ip, $cidr) {
     if (strpos($cidr, '/') === false) {
         return $ip === $cidr;
@@ -629,7 +677,7 @@ function poseaband_sync_system($conf = null) {
         if ($auto_guest) {
             $guest_ips = [];
             foreach ($arp_map as $mac => $ip) {
-                if (!str_starts_with($ip, '192.168.')) continue;
+                if (!poseaband_is_local_ip($ip)) continue;
                 if (isset($explicit_ips[$ip])) continue; // Exclude IPs with explicit QoS rules
                 $is_ad = false;
                 if (isset($ad_sessions[$ip]) && ($ad_sessions[$ip]['status'] ?? '') === 'authenticated') {
@@ -736,6 +784,7 @@ function poseaband_sync_system($conf = null) {
         foreach (array_keys($explicit_ips) as $ex_ip) {
             if (filter_var($ex_ip, FILTER_VALIDATE_IP)) {
                 @shell_exec("/sbin/pfctl -t PoseaBand_Guests -T delete " . escapeshellarg($ex_ip) . " 2>/dev/null");
+                poseaband_kill_client_states($ex_ip);
             }
         }
     }

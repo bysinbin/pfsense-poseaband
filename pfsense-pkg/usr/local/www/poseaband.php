@@ -82,17 +82,28 @@ if (isset($_GET['ajax_traffic'])) {
                 if (preg_match('/^\s*([0-9a-z\.\-_]+)\s+<=\s+([0-9\.]+[A-Za-z]+)\s+([0-9\.]+[A-Za-z]+)/', $line2, $m2)) {
                     $host_a = $m1[1];
                     $host_b = $m2[1];
-                    $down = pb_parse_rate($m1[2]);
-                    $up = pb_parse_rate($m2[2]);
                     
                     $lan_ip = null;
                     $remote = null;
-                    if (str_starts_with($host_b, '192.168.')) {
+                    $down = 0.0;
+                    $up = 0.0;
+                    
+                    if (poseaband_is_local_ip($host_b)) {
+                        // host_a is remote, host_b is LAN client.
+                        // host_a => host_b is traffic from remote to LAN = DOWNLOAD!
+                        // host_b <= host_a is traffic from LAN to remote = UPLOAD!
                         $lan_ip = $host_b;
                         $remote = $host_a;
-                    } elseif (str_starts_with($host_a, '192.168.')) {
+                        $down = pb_parse_rate($m1[2]);
+                        $up = pb_parse_rate($m2[2]);
+                    } elseif (poseaband_is_local_ip($host_a)) {
+                        // host_a is LAN client, host_b is remote.
+                        // host_a => host_b is traffic from LAN to remote = UPLOAD!
+                        // host_b <= host_a is traffic from remote to LAN = DOWNLOAD!
                         $lan_ip = $host_a;
                         $remote = $host_b;
+                        $up = pb_parse_rate($m1[2]);
+                        $down = pb_parse_rate($m2[2]);
                     }
                     
                     if ($lan_ip) {
@@ -167,6 +178,22 @@ if (isset($_GET['ajax_traffic'])) {
     exit;
 }
 
+// Handle AJAX state reset
+if (isset($_GET['ajax_kill_state'])) {
+    session_write_close();
+    header('Content-Type: application/json; charset=utf-8');
+    $kill_ip = trim($_GET['ip'] ?? '');
+    $success = false;
+    if ($kill_ip === 'all') {
+        $count = poseaband_kill_all_client_states();
+        $success = true;
+    } elseif (filter_var($kill_ip, FILTER_VALIDATE_IP)) {
+        $success = poseaband_kill_client_states($kill_ip);
+    }
+    echo json_encode(['success' => $success, 'ip' => $kill_ip]);
+    exit;
+}
+
 // Handle Form Submissions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['act'] ?? '';
@@ -180,7 +207,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         poseaband_save_config($conf);
         poseaband_sync_system($conf);
-        $savemsg = "PoseaBand yapılandırması başarıyla kaydedildi ve uygulandı.";
+        poseaband_kill_all_client_states();
+        $savemsg = "PoseaBand yapılandırması başarıyla kaydedildi, uygulandı ve aktif oturumlar yenilendi.";
 
     } elseif ($action === 'save_profile') {
         $p_id = trim($_POST['prof_id'] ?? '');
@@ -220,6 +248,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             poseaband_save_config($conf);
             poseaband_sync_system($conf);
+            poseaband_kill_all_client_states();
         }
 
     } elseif ($action === 'del_profile') {
@@ -232,6 +261,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }));
             poseaband_save_config($conf);
             poseaband_sync_system($conf);
+            poseaband_kill_all_client_states();
             $savemsg = "Hız profili başarıyla silindi.";
         }
 
@@ -276,7 +306,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             poseaband_sync_system($conf);
             if ($t_type === 'ip' && filter_var($t_val, FILTER_VALIDATE_IP)) {
                 @shell_exec("/sbin/pfctl -t PoseaBand_Guests -T delete " . escapeshellarg($t_val) . " 2>/dev/null");
-                @shell_exec("/sbin/pfctl -k " . escapeshellarg($t_val) . " 2>/dev/null");
+                poseaband_kill_client_states($t_val);
+            } else {
+                poseaband_kill_all_client_states();
             }
         }
 
@@ -287,13 +319,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }));
         poseaband_save_config($conf);
         poseaband_sync_system($conf);
+        poseaband_kill_all_client_states();
         $savemsg = "İstemci hız kuralı başarıyla silindi.";
 
     } elseif ($action === 'kill_host_states') {
-        $kill_ip = escapeshellarg(trim($_POST['kill_ip'] ?? ''));
-        if (!empty($kill_ip)) {
-            shell_exec("/sbin/pfctl -k {$kill_ip} 2>/dev/null");
-            $savemsg = "{$kill_ip} için aktif tüm oturumlar sıfırlandı.";
+        $kill_ip = trim($_POST['kill_ip'] ?? '');
+        if ($kill_ip === 'all') {
+            $cnt = poseaband_kill_all_client_states();
+            $savemsg = "Tüm aktif istemcilerin ({$cnt}) oturumları sıfırlandı ve hız limitleri zorlandı.";
+        } elseif (!empty($kill_ip)) {
+            poseaband_kill_client_states($kill_ip);
+            $savemsg = "{$kill_ip} için aktif tüm oturumlar sıfırlandı ve hız limiti zorlandı.";
         }
     }
 }
@@ -720,6 +756,7 @@ foreach ($conf['profiles'] ?? [] as $p) {
                 <div>
                     <span id="pbStatusBadge" class="badge" style="background-color:#1e293b;">Yükleniyor...</span>
                     <button type="button" class="btn btn-xs btn-default" onclick="refreshBandTraffic();" style="margin-left:8px;"><i class="fa fa-refresh"></i> Yenile</button>
+                    <button type="button" class="btn btn-xs btn-danger" onclick="killHostState('all');" style="margin-left:6px;" title="Tüm İstemcilerin Aktif Bağlantılarını Sıfırla ve Hız Limitlerini Uygulat"><i class="fa fa-bolt"></i> Tüm Oturumları Sıfırla</button>
                 </div>
             </div>
             <div class="panel-body" style="overflow-x:auto;">
@@ -952,13 +989,25 @@ function quickAssignProfile(ip, mac, user, currentProfId) {
     document.getElementById('rule_target_profile').focus();
 }
 
-// Kill State Function
+// Kill State Function (AJAX - no page reload)
 function killHostState(ip) {
-    if (!confirm(ip + ' için aktif oturumları sıfırlamak istediğinize emin misiniz?')) return;
-    var f = document.getElementById('actionForm');
-    document.getElementById('action_act').value = 'kill_host_states';
-    document.getElementById('action_kill_ip').value = ip;
-    f.submit();
+    var msg = (ip === 'all') 
+        ? 'İzlenen tüm istemcilerin aktif ağ oturumlarını sıfırlayıp limitleri hemen zorlamak istiyor musunuz?' 
+        : (ip + ' için aktif tüm ağ oturumlarını sıfırlayıp limitleri hemen zorlamak istiyor musunuz?');
+    if (!confirm(msg)) return;
+
+    var badge = document.getElementById('pbStatusBadge');
+    if (badge) badge.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Sıfırlanıyor...';
+
+    fetch('/poseaband.php?ajax_kill_state=1&ip=' + encodeURIComponent(ip))
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            setTimeout(refreshBandTraffic, 600);
+        })
+        .catch(function(err) {
+            alert('Oturum sıfırlama hatası: ' + err);
+            refreshBandTraffic();
+        });
 }
 
 // Live Traffic Polling
