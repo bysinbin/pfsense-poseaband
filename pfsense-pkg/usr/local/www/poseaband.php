@@ -220,8 +220,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         poseaband_save_config($conf);
         poseaband_sync_system($conf);
-        poseaband_kill_all_client_states();
-        $savemsg = "PoseaBand yapılandırması başarıyla kaydedildi, uygulandı ve aktif oturumlar yenilendi.";
+        $savemsg = "PoseaBand yapılandırması başarıyla kaydedildi ve uygulandı.";
 
     } elseif ($action === 'save_profile') {
         $p_id = trim($_POST['prof_id'] ?? '');
@@ -261,7 +260,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             poseaband_save_config($conf);
             poseaband_sync_system($conf);
-            poseaband_kill_all_client_states();
         }
 
     } elseif ($action === 'del_profile') {
@@ -274,7 +272,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }));
             poseaband_save_config($conf);
             poseaband_sync_system($conf);
-            poseaband_kill_all_client_states();
             $savemsg = "Hız profili başarıyla silindi.";
         }
 
@@ -320,8 +317,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($t_type === 'ip' && filter_var($t_val, FILTER_VALIDATE_IP)) {
                 @shell_exec("/sbin/pfctl -t PoseaBand_Guests -T delete " . escapeshellarg($t_val) . " 2>/dev/null");
                 poseaband_kill_client_states($t_val);
-            } else {
-                poseaband_kill_all_client_states();
             }
         }
 
@@ -332,7 +327,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }));
         poseaband_save_config($conf);
         poseaband_sync_system($conf);
-        poseaband_kill_all_client_states();
         $savemsg = "İstemci hız kuralı başarıyla silindi.";
 
     } elseif ($action === 'kill_host_states') {

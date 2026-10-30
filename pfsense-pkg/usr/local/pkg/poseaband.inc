@@ -108,6 +108,35 @@ function poseaband_kill_client_states($ip) {
     if (!filter_var($ip, FILTER_VALIDATE_IP)) {
         return false;
     }
+
+    $admin_ip = $_SERVER['REMOTE_ADDR'] ?? '';
+    $is_current_admin = ($ip === $admin_ip);
+
+    // If target is the admin's currently connected WebGUI/SSH session, NEVER do blanket pfctl -k!
+    // Blanket kill destroys the TCP socket mid-request, causing browser hang / HTTP/2 connection error.
+    if ($is_current_admin) {
+        $esc_ip = preg_quote($ip, '/');
+        exec("/sbin/pfctl -vvs states 2>/dev/null", $lines);
+        $cur_state_is_target = false;
+        $cur_state_is_mgmt = false;
+        $killed = 0;
+        foreach ($lines as $line) {
+            if (isset($line[0]) && $line[0] !== ' ' && $line[0] !== "\t") {
+                $cur_state_is_target = (preg_match("/(^|[\s<>\-])" . $esc_ip . "(:|\s|$)/", $line) === 1);
+                $cur_state_is_mgmt = (preg_match("/:(448|443|80|422|22)\b/", $line) === 1);
+                continue;
+            }
+            if ($cur_state_is_target && !$cur_state_is_mgmt) {
+                if (preg_match('/id:\s*([0-9a-f]+)\s+creatorid:\s*([0-9a-f]+)/i', $line, $m)) {
+                    @shell_exec("/sbin/pfctl -k id -k " . escapeshellarg($m[1] . '/' . $m[2]) . " 2>/dev/null");
+                    $killed++;
+                }
+            }
+        }
+        return true;
+    }
+
+    // For other clients, safely flush their external states
     if (function_exists('pfSense_kill_states')) {
         @pfSense_kill_states($ip . "/32");
         @pfSense_kill_states("0.0.0.0/0", $ip . "/32");
@@ -784,7 +813,6 @@ function poseaband_sync_system($conf = null) {
         foreach (array_keys($explicit_ips) as $ex_ip) {
             if (filter_var($ex_ip, FILTER_VALIDATE_IP)) {
                 @shell_exec("/sbin/pfctl -t PoseaBand_Guests -T delete " . escapeshellarg($ex_ip) . " 2>/dev/null");
-                poseaband_kill_client_states($ex_ip);
             }
         }
     }
