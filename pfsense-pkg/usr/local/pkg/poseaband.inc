@@ -321,6 +321,164 @@ function poseaband_get_ad_metadata() {
     return $res;
 }
 
+function poseaband_get_ldap_enrichment() {
+    $cache_file = '/tmp/poseaband_ldap_map.json';
+    if (file_exists($cache_file) && (time() - filemtime($cache_file) < 300)) {
+        $cached = @json_decode(@file_get_contents($cache_file), true);
+        if (is_array($cached) && (!empty($cached['groups']) || !empty($cached['users']))) {
+            return $cached;
+        }
+    }
+
+    $res = ['groups' => [], 'users' => []];
+
+    if (file_exists('/usr/local/pkg/posea_ad_sso.inc')) {
+        require_once('/usr/local/pkg/posea_ad_sso.inc');
+        if (function_exists('posea_sso_get_config') && function_exists('posea_sso_ldap_connect') && function_exists('posea_sso_ldap_bind')) {
+            $cfg = posea_sso_get_config();
+            $ldap = @posea_sso_ldap_connect($cfg);
+            if ($ldap && @posea_sso_ldap_bind($ldap, $cfg['bind_user'] ?? '', $cfg['bind_password'] ?? '')) {
+                $dn = $cfg['base_dn'] ?: 'DC=domain,DC=local';
+
+                // 1. Query users
+                $sr_u = @ldap_search($ldap, $dn, '(&(objectCategory=person)(objectClass=user)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))', ['samaccountname', 'displayname', 'department', 'memberof']);
+                if ($sr_u) {
+                    $u_entries = @ldap_get_entries($ldap, $sr_u);
+                    for ($i = 0; $i < ($u_entries['count'] ?? 0); $i++) {
+                        $e = $u_entries[$i];
+                        $sam = strtolower($e['samaccountname'][0] ?? '');
+                        if (!$sam) continue;
+
+                        $u_groups = [];
+                        for ($m = 0; $m < ($e['memberof']['count'] ?? 0); $m++) {
+                            if (preg_match('/^CN=([^,]+)/i', $e['memberof'][$m], $cn_m)) {
+                                $u_groups[] = strtolower($cn_m[1]);
+                            }
+                        }
+
+                        $res['users'][$sam] = [
+                            'sam' => $e['samaccountname'][0],
+                            'display_name' => $e['displayname'][0] ?? '',
+                            'department' => $e['department'][0] ?? '',
+                            'groups' => $u_groups
+                        ];
+                    }
+                }
+
+                // 2. Query groups
+                $sr_g = @ldap_search($ldap, $dn, '(|(objectClass=group)(objectCategory=group))', ['cn', 'samaccountname', 'member']);
+                if ($sr_g) {
+                    $g_entries = @ldap_get_entries($ldap, $sr_g);
+                    for ($i = 0; $i < ($g_entries['count'] ?? 0); $i++) {
+                        $g = $g_entries[$i];
+                        $gname = strtolower($g['samaccountname'][0] ?? ($g['cn'][0] ?? ''));
+                        if (!$gname) continue;
+
+                        $members = [];
+                        for ($m = 0; $m < ($g['member']['count'] ?? 0); $m++) {
+                            if (preg_match('/^CN=([^,]+)/i', $g['member'][$m], $cn_m)) {
+                                $cn_val = $cn_m[1];
+                                $parts = preg_split('/[\s\-]+/', $cn_val);
+                                if (!empty($parts[0])) {
+                                    $members[strtolower($parts[0])] = true;
+                                }
+                                $members[strtolower($cn_val)] = true;
+                            }
+                        }
+                        $res['groups'][$gname] = array_keys($members);
+                    }
+                }
+
+                @ldap_close($ldap);
+                @file_put_contents($cache_file, json_encode($res, JSON_UNESCAPED_UNICODE));
+            }
+        }
+    }
+
+    return $res;
+}
+
+function poseaband_resolve_client_identity($ip, $s, $ldap_enrichment = null) {
+    if ($ldap_enrichment === null) {
+        $ldap_enrichment = poseaband_get_ldap_enrichment();
+    }
+    $users = $ldap_enrichment['users'] ?? [];
+
+    $u_user = trim($s['username'] ?? '');
+    $u_host = trim($s['hostname'] ?? '');
+    $u_disp = trim($s['display_name'] ?? '');
+    $dept = trim($s['department'] ?? '');
+    $groups = is_array($s['groups'] ?? null) ? $s['groups'] : [];
+
+    // Candidate keys to match against LDAP users
+    $candidates = [];
+    if ($u_user && strcasecmp($u_user, 'anonymous') !== 0) $candidates[] = strtolower($u_user);
+    if ($u_host) $candidates[] = strtolower($u_host);
+
+    // Strip computer prefixes (e.g., PC-TERM15 -> term15)
+    $strip_regex = '/^(pc[-_]|ws[-_]|laptop[-_]|nb[-_]|cl[-_]|desktop[-_])/i';
+    if ($u_host) {
+        $st = preg_replace($strip_regex, '', $u_host);
+        if ($st && strcasecmp($st, $u_host) !== 0) $candidates[] = strtolower($st);
+    }
+    if ($u_user) {
+        $st = preg_replace($strip_regex, '', $u_user);
+        if ($st && strcasecmp($st, $u_user) !== 0) $candidates[] = strtolower($st);
+    }
+
+    $matched_u = null;
+    foreach ($candidates as $cand) {
+        if (isset($users[$cand])) {
+            $matched_u = $users[$cand];
+            break;
+        }
+    }
+
+    if (!$matched_u && !empty($users)) {
+        foreach ($users as $sam => $uinfo) {
+            $patt = '/(^|[^a-z0-9])' . preg_quote($sam, '/') . '($|[^a-z0-9])/i';
+            if (($u_host && preg_match($patt, $u_host)) || ($u_user && preg_match($patt, $u_user))) {
+                $matched_u = $uinfo;
+                break;
+            }
+        }
+    }
+
+    if ($matched_u) {
+        $real_sam = $matched_u['sam'];
+        $real_disp = $matched_u['display_name'];
+        $disp_label = $real_sam . ($real_disp ? " ({$real_disp})" : "");
+        $groups = array_unique(array_merge($groups, $matched_u['groups'] ?? []));
+
+        // Auto-assign primary department from groups if blank or "Domain Computers"
+        if (empty($dept) || strcasecmp($dept, 'Domain Computers') === 0) {
+            if ($matched_u['department']) {
+                $dept = $matched_u['department'];
+            } elseif (in_array('muhasebe', $groups)) $dept = 'Muhasebe';
+            elseif (in_array('yonetim', $groups)) $dept = 'Yonetim';
+            elseif (in_array('yonetici', $groups)) $dept = 'Yonetici';
+        }
+
+        return [
+            'username' => $real_sam,
+            'hostname' => $u_host,
+            'display_name' => $disp_label,
+            'department' => $dept,
+            'groups' => $groups,
+            'is_ad' => true
+        ];
+    }
+
+    return [
+        'username' => $u_user ?: 'anonymous',
+        'hostname' => $u_host,
+        'display_name' => $u_disp ?: ($u_host ?: $ip),
+        'department' => $dept,
+        'groups' => $groups,
+        'is_ad' => (!empty($u_user) && strcasecmp($u_user, 'anonymous') !== 0 && strpos($u_user, 'Misafir') === false)
+    ];
+}
+
 function poseaband_find_client_profile($conf, $ip, $mac = '', $user = '', $dept = '', $groups = []) {
     $profiles_by_id = [];
     foreach ($conf['profiles'] ?? [] as $p) {
@@ -330,12 +488,15 @@ function poseaband_find_client_profile($conf, $ip, $mac = '', $user = '', $dept 
     $mac_clean = strtolower(trim($mac));
     $user_clean = strtolower(trim($user));
     $dept_clean = strtolower(trim($dept));
+    if (!is_array($groups)) $groups = [];
+    $groups_lower = array_map('strtolower', $groups);
 
     // 1. Check explicit client rules (highest precedence)
     foreach ($conf['client_rules'] ?? [] as $cr) {
         if (empty($cr['enabled'])) continue;
         $t_type = $cr['target_type'] ?? 'ip';
         $t_val = trim($cr['target_val'] ?? '');
+        $t_clean = strtolower($t_val);
         $match = false;
 
         switch ($t_type) {
@@ -355,22 +516,32 @@ function poseaband_find_client_profile($conf, $ip, $mac = '', $user = '', $dept 
                 }
                 break;
             case 'mac':
-                if ($mac_clean && $mac_clean === strtolower($t_val)) $match = true;
+                if ($mac_clean && $mac_clean === $t_clean) $match = true;
                 break;
             case 'user':
-                if ($user_clean && (strcasecmp($user_clean, strtolower($t_val)) === 0 || strpos($user_clean, strtolower($t_val)) !== false)) {
+                $patt = '/(^|[^a-z0-9])' . preg_quote($t_clean, '/') . '($|[^a-z0-9])/i';
+                if ($user_clean && (strcasecmp($user_clean, $t_clean) === 0 || preg_match($patt, $user_clean))) {
                     $match = true;
                 }
                 break;
             case 'group':
-                if ($dept_clean && strcasecmp($dept_clean, strtolower($t_val)) === 0) {
+                if ($dept_clean && strcasecmp($dept_clean, $t_clean) === 0) {
                     $match = true;
                 }
-                if (!$match && !empty($groups) && is_array($groups)) {
-                    foreach ($groups as $g) {
-                        if (strcasecmp($g, $t_val) === 0) {
-                            $match = true;
-                            break;
+                if (!$match && in_array($t_clean, $groups_lower)) {
+                    $match = true;
+                }
+                // Also check LDAP groups map if not matched yet
+                if (!$match) {
+                    $ldap_map = poseaband_get_ldap_enrichment();
+                    $g_members = $ldap_map['groups'][$t_clean] ?? [];
+                    if (!empty($g_members)) {
+                        foreach ($g_members as $mem) {
+                            $m_patt = '/(^|[^a-z0-9])' . preg_quote($mem, '/') . '($|[^a-z0-9])/i';
+                            if ($user_clean && preg_match($m_patt, $user_clean)) {
+                                $match = true;
+                                break;
+                            }
                         }
                     }
                 }
@@ -579,6 +750,19 @@ function poseaband_sync_system($conf = null) {
             $ad_sessions = @json_decode(file_get_contents('/var/etc/poseafilter/ad_users.json'), true) ?: [];
         }
 
+        // Enrich AD sessions with real LDAP user accounts, display names, departments & groups
+        $ldap_enrichment = poseaband_get_ldap_enrichment();
+        $ldap_groups_map = $ldap_enrichment['groups'] ?? [];
+
+        foreach ($ad_sessions as $u_ip => &$u_info) {
+            $resolved = poseaband_resolve_client_identity($u_ip, $u_info, $ldap_enrichment);
+            $u_info['username'] = $resolved['username'];
+            $u_info['display_name'] = $resolved['display_name'];
+            $u_info['department'] = $resolved['department'];
+            $u_info['groups'] = $resolved['groups'];
+        }
+        unset($u_info);
+
         // Clean existing PoseaBand specific rules
         $cleaned_rules = [];
         foreach ($config['filter']['rule'] as $r) {
@@ -650,15 +834,24 @@ function poseaband_sync_system($conf = null) {
                     $explicit_ips[$m_ip] = true;
                 }
             } elseif ($t_type === 'user') {
+                $t_clean = strtolower($t_val);
+                $patt = '/(^|[^a-z0-9])' . preg_quote($t_clean, '/') . '($|[^a-z0-9])/i';
                 foreach ($ad_sessions as $u_ip => $u_info) {
-                    if (strcasecmp($u_info['username'] ?? '', $t_val) === 0 || strcasecmp($u_info['hostname'] ?? '', $t_val) === 0) {
+                    $u_user = strtolower(trim($u_info['username'] ?? ''));
+                    $u_host = strtolower(trim($u_info['hostname'] ?? ''));
+                    $u_disp = strtolower(trim($u_info['display_name'] ?? ''));
+                    if ($u_user === $t_clean || $u_host === $t_clean || preg_match($patt, $u_user) || preg_match($patt, $u_host) || preg_match($patt, $u_disp)) {
                         $targets[] = ['address' => $u_ip];
                         $explicit_ips[$u_ip] = true;
                     }
                 }
             } elseif ($t_type === 'group') {
+                $g_key = strtolower($t_val);
+                $g_members = $ldap_groups_map[$g_key] ?? [];
+
                 foreach ($ad_sessions as $u_ip => $u_info) {
                     $g_match = false;
+                    // 1. Direct department or group membership from session
                     if (strcasecmp($u_info['department'] ?? '', $t_val) === 0) {
                         $g_match = true;
                     }
@@ -670,6 +863,21 @@ function poseaband_sync_system($conf = null) {
                             }
                         }
                     }
+                    // 2. Active Directory LDAP group membership resolution
+                    if (!$g_match && !empty($g_members)) {
+                        $u_user = strtolower(trim($u_info['username'] ?? ''));
+                        $u_host = strtolower(trim($u_info['hostname'] ?? ''));
+                        $u_disp = strtolower(trim($u_info['display_name'] ?? ''));
+
+                        foreach ($g_members as $mem) {
+                            $m_patt = '/(^|[^a-z0-9])' . preg_quote($mem, '/') . '($|[^a-z0-9])/i';
+                            if (($u_host && preg_match($m_patt, $u_host)) || ($u_user && preg_match($m_patt, $u_user)) || ($u_disp && preg_match($m_patt, $u_disp))) {
+                                $g_match = true;
+                                break;
+                            }
+                        }
+                    }
+
                     if ($g_match) {
                         $targets[] = ['address' => $u_ip];
                         $explicit_ips[$u_ip] = true;
@@ -803,6 +1011,7 @@ function poseaband_sync_system($conf = null) {
     write_config("PoseaBand: " . ($enabled ? "Synchronized QoS Profiles and Rules" : "Disabled QoS Limiting"));
     filter_configure();
     if ($enabled && !empty($explicit_ips)) {
+        poseaband_kill_all_client_states(array_keys($explicit_ips));
         foreach (array_keys($explicit_ips) as $ex_ip) {
             if (filter_var($ex_ip, FILTER_VALIDATE_IP)) {
                 @shell_exec("/sbin/pfctl -t PoseaBand_Guests -T delete " . escapeshellarg($ex_ip) . " 2>/dev/null");

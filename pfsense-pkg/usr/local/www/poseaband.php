@@ -135,6 +135,8 @@ if (isset($_GET['ajax_traffic'])) {
         return $b['down'] <=> $a['down'];
     });
     
+    $ldap_enrichment = poseaband_get_ldap_enrichment();
+
     $result = [];
     foreach ($rates as $ip => $data) {
         $u_name = "Misafir Cihaz / Wi-Fi";
@@ -143,13 +145,11 @@ if (isset($_GET['ajax_traffic'])) {
         $is_ad_auth = false;
 
         if (isset($ad_users[$ip])) {
-            $u = $ad_users[$ip];
-            if (!empty($u['username']) && $u['username'] !== 'anonymous' && ($u['status'] ?? '') === 'authenticated') {
-                $u_name = $u['display_name'] ?? ($u['username'] ?? 'Domain User');
-                $dept = $u['department'] ?? 'Domain Computers';
-                $groups = $u['groups'] ?? [];
-                $is_ad_auth = true;
-            }
+            $resolved = poseaband_resolve_client_identity($ip, $ad_users[$ip], $ldap_enrichment);
+            $u_name = $resolved['display_name'];
+            $dept = $resolved['department'] ?: 'Genel';
+            $groups = $resolved['groups'];
+            $is_ad_auth = $resolved['is_ad'];
         }
         $mac = $arp_map[$ip] ?? '';
 
