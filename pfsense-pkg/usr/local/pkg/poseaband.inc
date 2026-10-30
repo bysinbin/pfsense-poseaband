@@ -821,4 +821,6 @@ function poseaband_deinstall() {
     $conf['enabled'] = false;
     poseaband_save_config($conf);
     poseaband_sync_system($conf);
+    @unlink('/usr/local/www/widgets/include/poseaband.inc');
+    @unlink('/usr/local/www/widgets/widgets/poseaband.widget.php');
 }

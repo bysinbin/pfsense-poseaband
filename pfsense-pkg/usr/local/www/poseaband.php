@@ -180,14 +180,35 @@ if (isset($_GET['ajax_traffic'])) {
         ];
     }
     
+    $tot_down = 0.0;
+    $tot_up = 0.0;
+    foreach ($result as $r) {
+        $tot_down += (float)($r['down_mbps'] ?? 0);
+        $tot_up += (float)($r['up_mbps'] ?? 0);
+    }
+
     $json_out = json_encode([
         'enabled' => !empty($conf['enabled']),
         'total_clients' => count($result),
+        'total_down_mbps' => round($tot_down, 2),
+        'total_up_mbps' => round($tot_up, 2),
         'clients' => array_slice($result, 0, 25)
     ], JSON_UNESCAPED_UNICODE);
 
     @file_put_contents($cache_file, $json_out);
     echo $json_out;
+    exit;
+}
+
+// Handle AJAX toggle service (enable / disable)
+if (isset($_GET['ajax_toggle_service'])) {
+    session_write_close();
+    header('Content-Type: application/json; charset=utf-8');
+    $conf = poseaband_get_config();
+    $conf['enabled'] = empty($conf['enabled']);
+    poseaband_save_config($conf);
+    poseaband_sync_system($conf);
+    echo json_encode(['success' => true, 'enabled' => (bool)$conf['enabled']]);
     exit;
 }
 

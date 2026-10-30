@@ -15,10 +15,12 @@ if [ ! -d "${SCRIPT_DIR}/pfsense-pkg" ]; then
     SCRIPT_DIR="${TMP_DIR}/pfsense-poseaband-main"
 fi
 
-mkdir -p /usr/local/pkg /usr/local/www /var/etc/poseafilter
+mkdir -p /usr/local/pkg /usr/local/www /var/etc/poseafilter /usr/local/www/widgets/include /usr/local/www/widgets/widgets
 cp "${SCRIPT_DIR}/pfsense-pkg/usr/local/pkg/poseaband.inc" /usr/local/pkg/poseaband.inc
 cp "${SCRIPT_DIR}/pfsense-pkg/usr/local/pkg/poseaband.xml" /usr/local/pkg/poseaband.xml
 cp "${SCRIPT_DIR}/pfsense-pkg/usr/local/www/poseaband.php" /usr/local/www/poseaband.php
+cp "${SCRIPT_DIR}/pfsense-pkg/usr/local/www/widgets/include/poseaband.inc" /usr/local/www/widgets/include/poseaband.inc
+cp "${SCRIPT_DIR}/pfsense-pkg/usr/local/www/widgets/widgets/poseaband.widget.php" /usr/local/www/widgets/widgets/poseaband.widget.php
 
 php -r '
 require_once("/etc/inc/config.inc");
