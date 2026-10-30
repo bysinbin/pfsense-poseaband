@@ -109,41 +109,34 @@ function poseaband_kill_client_states($ip) {
         return false;
     }
 
-    $admin_ip = $_SERVER['REMOTE_ADDR'] ?? '';
-    $is_current_admin = ($ip === $admin_ip);
+    $esc_ip = preg_quote($ip, '/');
+    exec("/sbin/pfctl -vvs states 2>/dev/null", $lines);
+    $cur_state_is_target = false;
+    $cur_state_is_mgmt = false;
+    $target_ids = [];
 
-    // If target is the admin's currently connected WebGUI/SSH session, NEVER do blanket pfctl -k!
-    // Blanket kill destroys the TCP socket mid-request, causing browser hang / HTTP/2 connection error.
-    if ($is_current_admin) {
-        $esc_ip = preg_quote($ip, '/');
-        exec("/sbin/pfctl -vvs states 2>/dev/null", $lines);
-        $cur_state_is_target = false;
-        $cur_state_is_mgmt = false;
-        $killed = 0;
-        foreach ($lines as $line) {
-            if (isset($line[0]) && $line[0] !== ' ' && $line[0] !== "\t") {
-                $cur_state_is_target = (preg_match("/(^|[\s<>\-])" . $esc_ip . "(:|\s|$)/", $line) === 1);
-                $cur_state_is_mgmt = (preg_match("/:(448|443|80|422|22)\b/", $line) === 1);
-                continue;
-            }
-            if ($cur_state_is_target && !$cur_state_is_mgmt) {
-                if (preg_match('/id:\s*([0-9a-f]+)\s+creatorid:\s*([0-9a-f]+)/i', $line, $m)) {
-                    @shell_exec("/sbin/pfctl -k id -k " . escapeshellarg($m[1] . '/' . $m[2]) . " 2>/dev/null");
-                    $killed++;
-                }
+    foreach ($lines as $line) {
+        if (isset($line[0]) && $line[0] !== ' ' && $line[0] !== "\t") {
+            // Match both LAN ("<- 192.168.2.13:port") and WAN NAT ("(192.168.2.13:port)")
+            $cur_state_is_target = (preg_match("/(^|[\s<>\-\(])" . $esc_ip . "(:|\s|\)|$)/", $line) === 1);
+            // Protect only actual pfSense WebGUI and SSH management ports to the firewall itself
+            $cur_state_is_mgmt = (
+                preg_match("/:(448|422)\b/", $line) === 1 && 
+                (strpos($line, '192.168.1.1') !== false || strpos($line, '192.168.2.1') !== false || strpos($line, '185.189.54.89') !== false || strpos($line, 'ddm-ssl') !== false)
+            );
+            continue;
+        }
+        if ($cur_state_is_target && !$cur_state_is_mgmt) {
+            if (preg_match('/id:\s*([0-9a-f]+)\s+creatorid:\s*([0-9a-f]+)/i', $line, $m)) {
+                $target_ids[] = $m[1] . '/' . $m[2];
             }
         }
-        return true;
     }
 
-    // For other clients, safely flush their external states
-    if (function_exists('pfSense_kill_states')) {
-        @pfSense_kill_states($ip . "/32");
-        @pfSense_kill_states("0.0.0.0/0", $ip . "/32");
+    foreach ($target_ids as $tid) {
+        @shell_exec("/sbin/pfctl -k id -k " . escapeshellarg($tid) . " 2>/dev/null");
     }
-    $esc = escapeshellarg($ip);
-    @shell_exec("/sbin/pfctl -k {$esc} 2>/dev/null");
-    @shell_exec("/sbin/pfctl -k 0.0.0.0/0 -k {$esc} 2>/dev/null");
+
     return true;
 }
 
